@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Supabase: Start Local Stack",
+      "type": "shell",
+      "command": "npx supabase start",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Supabase: Stop Local Stack",
+      "type": "shell",
+      "command": "npx supabase stop",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Supabase: Show Status",
+      "type": "shell",
+      "command": "npx supabase status",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Supabase: Link Remote Project",
+      "type": "shell",
+      "command": "npx supabase link --project-ref egtdzazlaxocrsqvdayr",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    }
+  ]
+}
