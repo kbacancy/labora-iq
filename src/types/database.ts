@@ -122,6 +122,17 @@ export interface Notification {
   created_at: string;
 }
 
+export interface CompliancePolicy {
+  id: string;
+  singleton: boolean;
+  audit_log_retention_days: number;
+  report_retention_days: number;
+  access_review_frequency_days: number;
+  last_access_review_at: string | null;
+  updated_by: string | null;
+  updated_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -216,6 +227,11 @@ export interface Database {
         Row: Notification;
         Insert: Omit<Notification, "id" | "created_at" | "is_read"> & { id?: string; created_at?: string; is_read?: boolean };
         Update: Partial<Notification>;
+      };
+      compliance_policies: {
+        Row: CompliancePolicy;
+        Insert: Omit<CompliancePolicy, "id" | "updated_at"> & { id?: string; updated_at?: string };
+        Update: Partial<CompliancePolicy>;
       };
     };
   };

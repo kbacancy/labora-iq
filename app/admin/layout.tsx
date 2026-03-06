@@ -81,6 +81,12 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
               Audit Logs
             </Link>
             <Link
+              href="/admin/compliance"
+              className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:border-indigo-400"
+            >
+              Compliance
+            </Link>
+            <Link
               href="/dashboard"
               className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:border-indigo-400"
             >
