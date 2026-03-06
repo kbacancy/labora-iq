@@ -9,6 +9,7 @@ import { RoleGate } from "@/src/components/auth/RoleGate";
 import { useAuth } from "@/src/context/AuthContext";
 import { supabase } from "@/src/lib/supabase";
 import { formatDate } from "@/src/lib/format";
+import { createAuditLog } from "@/src/lib/audit";
 import type { Patient } from "@/src/types/database";
 
 export default function PatientsPage() {
@@ -58,8 +59,21 @@ export default function PatientsPage() {
     if (updateError) {
       setError(updateError.message);
       setToast({ type: "error", message: updateError.message });
+      await createAuditLog({
+        userId: user?.id ?? null,
+        action: nextArchived ? "patient_archive_failed" : "patient_restore_failed",
+        tableName: "patients",
+        recordId: patient.id,
+      });
       return;
     }
+
+    await createAuditLog({
+      userId: user?.id ?? null,
+      action: nextArchived ? "patient_archived" : "patient_restored",
+      tableName: "patients",
+      recordId: patient.id,
+    });
 
     setPatients((current) => current.filter((item) => item.id !== patient.id));
     setToast({
@@ -88,6 +102,12 @@ export default function PatientsPage() {
       setDeletingId(null);
       setError(linkedOrderError.message);
       setToast({ type: "error", message: linkedOrderError.message });
+      await createAuditLog({
+        userId: user?.id ?? null,
+        action: "patient_delete_failed",
+        tableName: "patients",
+        recordId: id,
+      });
       return;
     }
 
@@ -96,6 +116,12 @@ export default function PatientsPage() {
       const message = "Cannot delete patient with existing orders. Archive instead.";
       setError(message);
       setToast({ type: "error", message });
+      await createAuditLog({
+        userId: user?.id ?? null,
+        action: "patient_delete_blocked_has_orders",
+        tableName: "patients",
+        recordId: id,
+      });
       return;
     }
 
@@ -108,8 +134,21 @@ export default function PatientsPage() {
         : deleteError.message;
       setError(message);
       setToast({ type: "error", message });
+      await createAuditLog({
+        userId: user?.id ?? null,
+        action: "patient_delete_failed",
+        tableName: "patients",
+        recordId: id,
+      });
       return;
     }
+
+    await createAuditLog({
+      userId: user?.id ?? null,
+      action: "patient_deleted",
+      tableName: "patients",
+      recordId: id,
+    });
 
     setPatients((current) => current.filter((patient) => patient.id !== id));
     setToast({ type: "success", message: "Patient deleted successfully." });

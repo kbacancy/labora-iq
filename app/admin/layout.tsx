@@ -61,12 +61,32 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
             <h1 className="text-xl font-semibold">Admin Management</h1>
             <p className="text-sm text-gray-400">Manage LaboraIQ internal users and roles.</p>
           </div>
-          <Link
-            href="/dashboard"
-            className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:border-indigo-400"
-          >
-            Back to Dashboard
-          </Link>
+          <div className="flex items-center gap-2">
+            <Link
+              href="/admin"
+              className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:border-indigo-400"
+            >
+              Users
+            </Link>
+            <Link
+              href="/admin/archived-patients"
+              className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:border-indigo-400"
+            >
+              Archived Patients
+            </Link>
+            <Link
+              href="/admin/audit-logs"
+              className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:border-indigo-400"
+            >
+              Audit Logs
+            </Link>
+            <Link
+              href="/dashboard"
+              className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-200 transition hover:border-indigo-400"
+            >
+              Back to Dashboard
+            </Link>
+          </div>
         </div>
         {children}
       </div>
