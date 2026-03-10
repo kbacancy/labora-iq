@@ -37,7 +37,12 @@ export default function DashboardPage() {
               supabase.from("patients").select("*", { count: "exact", head: true }),
               supabase.from("lab_orders").select("*", { count: "exact", head: true }),
               supabase.from("lab_orders").select("*", { count: "exact", head: true }).eq("status", "pending"),
-              supabase.from("lab_orders").select("total_price").gte("created_at", todayIso).eq("status", "completed"),
+              supabase
+                .from("lab_orders")
+                .select("total_price")
+                .gte("completed_at", todayIso)
+                .eq("status", "completed")
+                .eq("approval_status", "approved"),
             ]);
 
           const revenue = (revenueRows ?? []).reduce((sum, row) => sum + Number(row.total_price ?? 0), 0);
@@ -45,7 +50,7 @@ export default function DashboardPage() {
             { label: "Total Patients", value: String(patientCount ?? 0) },
             { label: "Total Orders", value: String(orderCount ?? 0) },
             { label: "Pending Reports", value: String(pendingCount ?? 0) },
-            { label: "Today's Revenue", value: formatCurrency(revenue) },
+            { label: "Today's Approved Revenue", value: formatCurrency(revenue) },
           ]);
         }
 

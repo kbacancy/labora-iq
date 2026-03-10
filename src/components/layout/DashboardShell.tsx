@@ -78,7 +78,7 @@ export const DashboardShell = ({ children }: { children: React.ReactNode }) => {
                   href="/admin"
                   className="rounded-lg border border-gray-700 px-3 py-1.5 text-sm text-gray-300 transition hover:border-indigo-400 hover:text-gray-100"
                 >
-                  Admin
+                  Admin Console
                 </Link>
               ) : null}
               {roleLabel ? (
