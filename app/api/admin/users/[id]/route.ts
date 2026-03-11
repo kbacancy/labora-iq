@@ -28,6 +28,16 @@ export async function PATCH(
     return NextResponse.json({ error: "User id is required." }, { status: 400 });
   }
 
+  const { data: targetProfile, error: targetProfileError } = await supabaseServerAdmin
+    .from("profiles")
+    .select("id,org_id")
+    .eq("id", id)
+    .single();
+
+  if (targetProfileError || !targetProfile || targetProfile.org_id !== authResult.orgId) {
+    return NextResponse.json({ error: "User not found in your organization." }, { status: 404 });
+  }
+
   const body = await request.json();
   const parsed = patchSchema.safeParse(body);
   if (!parsed.success) {
@@ -35,10 +45,25 @@ export async function PATCH(
   }
 
   if (parsed.data.action === "update_role") {
-    const { error } = await supabaseServerAdmin.from("profiles").update({ role: parsed.data.role }).eq("id", id);
+    const { error } = await supabaseServerAdmin
+      .from("profiles")
+      .update({ role: parsed.data.role })
+      .eq("id", id)
+      .eq("org_id", authResult.orgId);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+
+    const { error: memberError } = await supabaseServerAdmin
+      .from("organization_members")
+      .update({ role: parsed.data.role })
+      .eq("user_id", id)
+      .eq("org_id", authResult.orgId);
+
+    if (memberError) {
+      return NextResponse.json({ error: memberError.message }, { status: 500 });
+    }
+
     return NextResponse.json({ message: "Role updated." });
   }
 
@@ -69,6 +94,16 @@ export async function DELETE(
 
   if (authResult.userId === id) {
     return NextResponse.json({ error: "You cannot delete your own admin account." }, { status: 400 });
+  }
+
+  const { data: targetProfile, error: targetProfileError } = await supabaseServerAdmin
+    .from("profiles")
+    .select("id,org_id")
+    .eq("id", id)
+    .single();
+
+  if (targetProfileError || !targetProfile || targetProfile.org_id !== authResult.orgId) {
+    return NextResponse.json({ error: "User not found in your organization." }, { status: 404 });
   }
 
   const { error } = await supabaseServerAdmin.auth.admin.deleteUser(id, true);

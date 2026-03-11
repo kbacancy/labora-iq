@@ -2,6 +2,7 @@ export type Role = "admin" | "receptionist" | "technician";
 
 export interface Profile {
   id: string;
+  org_id: string;
   full_name: string;
   role: Role;
   created_at: string;
@@ -9,6 +10,7 @@ export interface Profile {
 
 export interface Patient {
   id: string;
+  org_id: string;
   name: string;
   age: number;
   gender: string;
@@ -22,6 +24,7 @@ export interface Patient {
 
 export interface LabTest {
   id: string;
+  org_id: string;
   test_name: string;
   category: string | null;
   price: number;
@@ -35,6 +38,7 @@ export type OrderStatus = "pending" | "in_progress" | "completed";
 
 export interface LabOrder {
   id: string;
+  org_id: string;
   patient_id: string;
   status: OrderStatus;
   total_price: number;
@@ -55,12 +59,14 @@ export interface LabOrder {
 
 export interface OrderTest {
   id: string;
+  org_id: string;
   order_id: string;
   test_id: string;
 }
 
 export interface Result {
   id: string;
+  org_id: string;
   order_id: string;
   test_id: string;
   result_value: string;
@@ -71,6 +77,7 @@ export interface Result {
 
 export interface Sample {
   id: string;
+  org_id: string;
   sample_code: string;
   patient_name: string;
   patient_id: string;
@@ -84,6 +91,7 @@ export interface Sample {
 
 export interface ReportRecord {
   id: string;
+  org_id: string;
   sample_id: string | null;
   order_id: string | null;
   file_url: string;
@@ -93,6 +101,7 @@ export interface ReportRecord {
 
 export interface InventoryItem {
   id: string;
+  org_id: string;
   reagent_name: string;
   quantity: number;
   reorder_level: number;
@@ -101,6 +110,7 @@ export interface InventoryItem {
 
 export interface AuditLog {
   id: string;
+  org_id: string;
   user_id: string | null;
   action: string;
   table_name: string;
@@ -110,6 +120,7 @@ export interface AuditLog {
 
 export interface Notification {
   id: string;
+  org_id: string;
   recipient_user_id: string | null;
   recipient_role: Role | null;
   type: string;
@@ -124,6 +135,7 @@ export interface Notification {
 
 export interface CompliancePolicy {
   id: string;
+  org_id: string;
   singleton: boolean;
   audit_log_retention_days: number;
   report_retention_days: number;
@@ -133,6 +145,22 @@ export interface CompliancePolicy {
   updated_at: string;
 }
 
+export interface Organization {
+  id: string;
+  name: string;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface OrganizationMember {
+  id: string;
+  org_id: string;
+  user_id: string;
+  role: Role;
+  full_name: string;
+  created_at: string;
+}
+
 export interface Database {
   public: {
     Tables: {
@@ -140,6 +168,16 @@ export interface Database {
         Row: Profile;
         Insert: Omit<Profile, "created_at"> & { created_at?: string };
         Update: Partial<Profile>;
+      };
+      organizations: {
+        Row: Organization;
+        Insert: Omit<Organization, "id" | "created_at"> & { id?: string; created_at?: string };
+        Update: Partial<Organization>;
+      };
+      organization_members: {
+        Row: OrganizationMember;
+        Insert: Omit<OrganizationMember, "id" | "created_at"> & { id?: string; created_at?: string };
+        Update: Partial<OrganizationMember>;
       };
       patients: {
         Row: Patient;

@@ -522,9 +522,9 @@ export default function DashboardPage() {
   }, [role, user?.id]);
 
   const urgencyToneClass = (tone: UrgencyItem["tone"]) => {
-    if (tone === "good") return "border-emerald-800/60 bg-emerald-950/30 text-emerald-300";
-    if (tone === "critical") return "border-red-800/60 bg-red-950/30 text-red-300";
-    return "border-amber-800/60 bg-amber-950/30 text-amber-300";
+    if (tone === "good") return "border-emerald-900/50 bg-emerald-950/20 text-emerald-300";
+    if (tone === "critical") return "border-red-900/50 bg-red-950/20 text-red-300";
+    return "border-amber-900/50 bg-amber-950/20 text-amber-300";
   };
 
   return (
@@ -532,13 +532,13 @@ export default function DashboardPage() {
       <PageHeader title="Dashboard" description="Live operational metrics for your laboratory." />
 
       {error ? (
-        <div className="mb-4 rounded-xl border border-red-900/50 bg-red-950/30 p-4 text-sm text-red-300">{error}</div>
+        <div className="mb-4 rounded-2xl border border-red-900/50 bg-red-950/30 p-4 text-sm text-red-300">{error}</div>
       ) : null}
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {[...Array(4)].map((_, index) => (
-            <div key={index} className="h-28 animate-pulse rounded-xl border border-gray-800 bg-gray-900" />
+            <div key={index} className="h-28 animate-pulse rounded-2xl border border-slate-800/70 bg-slate-900/60" />
           ))}
         </div>
       ) : (
@@ -556,14 +556,14 @@ export default function DashboardPage() {
       )}
 
       {!loading ? (
-        <section className="mt-4 rounded-xl border border-gray-800 bg-gray-900 p-4">
+        <section className="mt-4 rounded-2xl border border-slate-800/80 bg-slate-900/65 p-4 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
           <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-gray-200">[Urgency] Radar</h2>
-            <span className="text-xs text-gray-500">Role: {role}</span>
+            <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-200">Urgency Radar</h2>
+            <span className="text-xs text-slate-500">Role: {role}</span>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             {urgencyItems.map((item) => (
-              <Link key={item.label} href={item.href} className={`rounded-lg border px-3 py-2 transition hover:opacity-90 ${urgencyToneClass(item.tone)}`}>
+              <Link key={item.label} href={item.href} className={`rounded-xl border px-3 py-2 transition hover:opacity-90 ${urgencyToneClass(item.tone)}`}>
                 <p className="text-xs">{item.label}</p>
                 <p className="mt-1 text-xl font-semibold">{item.value}</p>
               </Link>
@@ -575,23 +575,23 @@ export default function DashboardPage() {
       {loading ? (
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {[...Array(2)].map((_, index) => (
-            <div key={index} className="h-52 animate-pulse rounded-xl border border-gray-800 bg-gray-900" />
+            <div key={index} className="h-52 animate-pulse rounded-2xl border border-slate-800/70 bg-slate-900/60" />
           ))}
         </div>
       ) : (
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
+          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/65 p-5 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-lg font-medium text-gray-100">[Action] Queue</h2>
-              <span className="text-xs text-gray-500">{role}</span>
+              <h2 className="text-2xl font-semibold tracking-tight text-slate-100">Action Queue</h2>
+              <span className="text-xs text-slate-500">{role}</span>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
               {actionItems.map((item) => (
-                <div key={item.label} className="rounded-lg border border-gray-800 bg-gray-950 p-3">
-                  <p className="text-xs text-gray-300">{item.label}</p>
-                  {item.value ? <p className="mt-1 text-3xl font-semibold text-gray-100">{item.value}</p> : null}
-                  {item.detail ? <p className="mt-1 text-xs text-gray-300">{item.detail}</p> : null}
-                  <Link href={item.href} className="mt-2 inline-block text-xs text-indigo-300 hover:text-indigo-200">
+                <div key={item.label} className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
+                  <p className="text-xs text-slate-300">{item.label}</p>
+                  {item.value ? <p className="mt-1 text-3xl font-semibold text-slate-100">{item.value}</p> : null}
+                  {item.detail ? <p className="mt-1 text-xs text-slate-400">{item.detail}</p> : null}
+                  <Link href={item.href} className="mt-2 inline-block text-xs text-blue-300 hover:text-blue-200">
                     {item.cta}
                   </Link>
                 </div>
@@ -599,19 +599,19 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-            <h2 className="mb-3 text-lg font-medium text-gray-100">[Activity] Recent</h2>
+          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/65 p-5 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
+            <h2 className="mb-3 text-2xl font-semibold tracking-tight text-slate-100">Recent Activity</h2>
             {recentItems.length === 0 ? (
-              <div className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-5">
-                <p className="text-sm text-gray-400">No recent activity.</p>
+              <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-5">
+                <p className="text-sm text-slate-400">No recent activity.</p>
               </div>
             ) : (
               <div className="space-y-2">
                 {recentItems.map((item, index) => (
-                  <div key={`${item.title}-${index}`} className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2" title={formatDate(item.time)}>
-                    <p className="text-sm font-medium text-gray-200">{item.title}</p>
-                    <p className="text-xs text-gray-300">{item.subtitle}</p>
-                    <p className="text-xs text-gray-400">{formatRelativeTime(item.time)}</p>
+                  <div key={`${item.title}-${index}`} className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" title={formatDate(item.time)}>
+                    <p className="text-sm font-medium text-slate-200">{item.title}</p>
+                    <p className="text-xs text-slate-300">{item.subtitle}</p>
+                    <p className="text-xs text-slate-400">{formatRelativeTime(item.time)}</p>
                   </div>
                 ))}
               </div>
@@ -621,20 +621,20 @@ export default function DashboardPage() {
       )}
 
       {!loading && insight ? (
-        <section className="mt-4 rounded-xl border border-indigo-900/40 bg-gradient-to-r from-indigo-950/25 to-blue-950/25 p-5">
-          <p className="text-xs uppercase tracking-wide text-indigo-300">[Insight]</p>
-          <p className="mt-1 text-lg font-semibold text-gray-100">{insight.title}</p>
-          <p className="mt-1 text-sm text-gray-300">{insight.body}</p>
+        <section className="mt-4 rounded-2xl border border-blue-900/30 bg-gradient-to-r from-slate-900/90 to-blue-950/25 p-5">
+          <p className="text-xs uppercase tracking-[0.2em] text-blue-300">Insight</p>
+          <p className="mt-1 text-2xl font-semibold tracking-tight text-slate-100">{insight.title}</p>
+          <p className="mt-1 text-sm text-slate-300">{insight.body}</p>
         </section>
       ) : null}
 
       {!loading ? (
-        <section className="mt-4 overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
-          <div className="border-b border-gray-800 px-4 py-3">
-            <h2 className="text-lg font-medium text-gray-100">{focusTitle}</h2>
+        <section className="mt-4 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/65 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
+          <div className="border-b border-slate-800 px-4 py-3">
+            <h2 className="text-2xl font-semibold tracking-tight text-slate-100">{focusTitle}</h2>
           </div>
           <table className="min-w-full text-sm">
-            <thead className="border-b border-gray-800 text-left text-gray-400">
+            <thead className="border-b border-slate-800 text-left text-slate-400">
               <tr>
                 <th className="px-4 py-3 font-medium">Item</th>
                 <th className="px-4 py-3 font-medium">Details</th>
@@ -645,15 +645,15 @@ export default function DashboardPage() {
             <tbody>
               {focusRows.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-4 py-6 text-center text-gray-400">
+                  <td colSpan={4} className="px-4 py-6 text-center text-slate-400">
                     Queue is clear.
                     {focusEmptyCta ? (
-                      <Link href={focusEmptyCta.href} className="ml-2 text-indigo-300 hover:text-indigo-200">
+                      <Link href={focusEmptyCta.href} className="ml-2 text-blue-300 hover:text-blue-200">
                         {focusEmptyCta.label}
                       </Link>
                     ) : null}
                     {role === "admin" ? (
-                      <Link href="/admin/audit-logs" className="ml-2 text-gray-300 hover:text-gray-100">
+                      <Link href="/admin/audit-logs" className="ml-2 text-slate-300 hover:text-slate-100">
                         View Audit Logs
                       </Link>
                     ) : null}
@@ -661,9 +661,9 @@ export default function DashboardPage() {
                 </tr>
               ) : (
                 focusRows.map((row, index) => (
-                  <tr key={`${row.primary}-${index}`} className="border-t border-gray-800 text-gray-200">
+                  <tr key={`${row.primary}-${index}`} className="border-t border-slate-800 text-slate-200">
                     <td className="px-4 py-3">{row.primary}</td>
-                    <td className="px-4 py-3 text-gray-400">{row.secondary}</td>
+                    <td className="px-4 py-3 text-slate-400">{row.secondary}</td>
                     <td className="px-4 py-3">
                       <span className={`rounded-md px-2 py-1 text-xs uppercase ${statusToneClass(row.status)}`}>{row.status}</span>
                       {row.status.toLowerCase().includes("overdue") ? (
@@ -671,7 +671,7 @@ export default function DashboardPage() {
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={row.href} className="rounded-md border border-indigo-700 px-2 py-1 text-xs text-indigo-300 hover:border-indigo-500">
+                      <Link href={row.href} className="rounded-md border border-blue-800 px-2 py-1 text-xs text-blue-300 hover:border-blue-600">
                         Open
                       </Link>
                     </td>

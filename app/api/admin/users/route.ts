@@ -3,12 +3,21 @@ import { z } from "zod";
 import { assertAdminFromRequest } from "@/src/lib/admin-auth";
 import { supabaseServerAdmin } from "@/src/lib/supabase-server";
 
-const createUserSchema = z.object({
-  email: z.email(),
-  password: z.string().min(8),
-  full_name: z.string().min(2),
-  role: z.enum(["admin", "receptionist", "technician"]),
-});
+const createUserSchema = z.discriminatedUnion("provisioning", [
+  z.object({
+    provisioning: z.literal("invite"),
+    email: z.email(),
+    full_name: z.string().min(2),
+    role: z.enum(["admin", "receptionist", "technician"]),
+  }),
+  z.object({
+    provisioning: z.literal("password"),
+    email: z.email(),
+    password: z.string().min(8),
+    full_name: z.string().min(2),
+    role: z.enum(["admin", "receptionist", "technician"]),
+  }),
+]);
 
 export async function GET(request: NextRequest) {
   const authResult = await assertAdminFromRequest(request);
@@ -19,6 +28,7 @@ export async function GET(request: NextRequest) {
   const { data: profiles, error: profilesError } = await supabaseServerAdmin
     .from("profiles")
     .select("id,full_name,role,created_at")
+    .eq("org_id", authResult.orgId)
     .order("created_at", { ascending: false });
 
   if (profilesError) {
@@ -68,13 +78,21 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid payload." }, { status: 400 });
   }
 
-  const { email, password, full_name, role } = parsed.data;
+  const { email, full_name, role, provisioning } = parsed.data;
+  const created =
+    provisioning === "invite"
+      ? await supabaseServerAdmin.auth.admin.inviteUserByEmail(email, {
+          data: { full_name },
+          redirectTo: `${request.nextUrl.origin}/login`,
+        })
+      : await supabaseServerAdmin.auth.admin.createUser({
+          email,
+          password: parsed.data.password,
+          email_confirm: true,
+          user_metadata: { full_name },
+        });
 
-  const { data: createdUser, error: createError } = await supabaseServerAdmin.auth.admin.createUser({
-    email,
-    password,
-    email_confirm: true,
-  });
+  const { data: createdUser, error: createError } = created;
 
   if (createError || !createdUser.user) {
     return NextResponse.json({ error: createError?.message ?? "Unable to create user." }, { status: 500 });
@@ -84,12 +102,29 @@ export async function POST(request: NextRequest) {
     id: createdUser.user.id,
     full_name,
     role,
+    org_id: authResult.orgId,
   });
 
   if (profileError) {
-    await supabaseServerAdmin.auth.admin.deleteUser(createdUser.user.id);
+    await supabaseServerAdmin.auth.admin.deleteUser(createdUser.user.id, true);
     return NextResponse.json({ error: profileError.message }, { status: 500 });
   }
 
-  return NextResponse.json({ message: "User created successfully." }, { status: 201 });
+  const { error: memberError } = await supabaseServerAdmin.from("organization_members").insert({
+    org_id: authResult.orgId,
+    user_id: createdUser.user.id,
+    role,
+    full_name,
+  });
+
+  if (memberError) {
+    await supabaseServerAdmin.from("profiles").delete().eq("id", createdUser.user.id);
+    await supabaseServerAdmin.auth.admin.deleteUser(createdUser.user.id, true);
+    return NextResponse.json({ error: memberError.message }, { status: 500 });
+  }
+
+  return NextResponse.json(
+    { message: provisioning === "invite" ? "Invitation sent successfully." : "User created successfully." },
+    { status: 201 }
+  );
 }

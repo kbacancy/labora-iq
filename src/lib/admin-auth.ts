@@ -22,13 +22,13 @@ export const assertAdminFromRequest = async (request: NextRequest) => {
 
   const { data: profile, error: profileError } = await supabaseServerAdmin
     .from("profiles")
-    .select("role")
+    .select("role,org_id")
     .eq("id", userData.user.id)
     .single();
 
-  if (profileError || profile?.role !== "admin") {
+  if (profileError || profile?.role !== "admin" || !profile?.org_id) {
     return { ok: false as const, status: 403, message: "Admin access required." };
   }
 
-  return { ok: true as const, userId: userData.user.id };
+  return { ok: true as const, userId: userData.user.id, orgId: profile.org_id };
 };

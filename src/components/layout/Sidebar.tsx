@@ -12,8 +12,9 @@ export const Sidebar = () => {
   const items = role ? sidebarByRole[role] : [];
 
   return (
-    <aside className="fixed left-0 top-0 z-20 hidden h-screen w-64 border-r border-gray-800 bg-gray-900/95 p-5 lg:block">
-      <p className="text-xl font-semibold tracking-tight text-indigo-400">LaboraIQ</p>
+    <aside className="fixed left-0 top-0 z-20 hidden h-screen w-64 border-r border-slate-800/80 bg-slate-950/95 p-5 lg:block">
+      <p className="text-3xl font-semibold tracking-tight text-slate-200">LaboraIQ</p>
+      <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-500">Lab Ops OS</p>
       <nav className="mt-8 space-y-2">
         {items.map((item) => {
           const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
@@ -23,8 +24,8 @@ export const Sidebar = () => {
               href={item.href}
               className={`block rounded-lg px-3 py-2 text-sm transition ${
                 active
-                  ? "bg-indigo-500/20 text-indigo-300"
-                  : "text-gray-300 hover:bg-gray-800 hover:text-gray-100"
+                  ? "bg-slate-800 text-slate-100"
+                  : "text-slate-300 hover:bg-slate-900 hover:text-slate-100"
               }`}
             >
               {item.label}

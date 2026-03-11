@@ -16,6 +16,16 @@ export async function POST(
     return NextResponse.json({ error: "User id is required." }, { status: 400 });
   }
 
+  const { data: targetProfile, error: targetProfileError } = await supabaseServerAdmin
+    .from("profiles")
+    .select("id,org_id")
+    .eq("id", id)
+    .single();
+
+  if (targetProfileError || !targetProfile || targetProfile.org_id !== authResult.orgId) {
+    return NextResponse.json({ error: "User not found in your organization." }, { status: 404 });
+  }
+
   const { data: userData, error: userError } = await supabaseServerAdmin.auth.admin.getUserById(id);
   if (userError || !userData.user?.email) {
     return NextResponse.json({ error: userError?.message ?? "User email not found." }, { status: 404 });

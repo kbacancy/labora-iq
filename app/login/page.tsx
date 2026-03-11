@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
@@ -50,33 +51,33 @@ export default function LoginPage() {
   });
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gray-950 px-4">
-      <div className="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 p-8 shadow-2xl">
-        <h1 className="text-2xl font-semibold tracking-tight text-gray-100">Welcome to LaboraIQ</h1>
-        <p className="mt-2 text-sm text-gray-400">Sign in to continue to your laboratory dashboard.</p>
+    <div className="flex min-h-screen items-center justify-center px-4">
+      <div className="w-full max-w-md rounded-2xl border border-slate-800 bg-slate-900/70 p-8 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
+        <h1 className="text-3xl font-semibold tracking-tight text-slate-100">Welcome to LaboraIQ</h1>
+        <p className="mt-2 text-sm text-slate-400">Sign in to continue to your laboratory dashboard.</p>
 
         <form onSubmit={onSubmit} className="mt-6 space-y-4">
           <div>
-            <label className="mb-1 block text-sm text-gray-300">Email</label>
+            <label className="mb-1 block text-sm text-slate-300">Email</label>
             <input
               type="email"
               {...register("email")}
-              className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-100"
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
               placeholder="name@laboraiq.com"
             />
           </div>
           <div>
-            <label className="mb-1 block text-sm text-gray-300">Password</label>
+            <label className="mb-1 block text-sm text-slate-300">Password</label>
             <input
               type="password"
               {...register("password")}
-              className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm text-gray-100"
-              placeholder="••••••••"
+              className="w-full rounded-lg border border-slate-700 bg-slate-950 px-3 py-2 text-sm text-slate-100"
+              placeholder="********"
             />
           </div>
 
           {(errorMessage || formState.errors.email?.message || formState.errors.password?.message) && (
-            <p className="text-sm text-red-400">
+            <p className="text-sm text-red-300">
               {errorMessage ?? formState.errors.email?.message ?? formState.errors.password?.message}
             </p>
           )}
@@ -84,11 +85,18 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={submitting}
-            className="w-full rounded-lg bg-indigo-500 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+            className="w-full rounded-lg border border-blue-500/60 bg-blue-500/20 px-4 py-2.5 text-sm font-medium text-blue-100 transition hover:bg-blue-500/30 disabled:cursor-not-allowed disabled:opacity-60"
           >
             {submitting ? "Signing in..." : "Login"}
           </button>
         </form>
+
+        <p className="mt-6 text-sm text-slate-400">
+          New laboratory?{" "}
+          <Link href="/get-started" className="text-blue-300 hover:text-blue-200">
+            Start onboarding
+          </Link>
+        </p>
       </div>
     </div>
   );

@@ -7,7 +7,7 @@ interface MetricCardProps {
 
 export const MetricCard = ({ label, value, trendText, tone = "neutral" }: MetricCardProps) => {
   const toneStyles: Record<NonNullable<MetricCardProps["tone"]>, string> = {
-    neutral: "border-gray-800 bg-gray-900",
+    neutral: "border-slate-800/80 bg-slate-900/65",
     good: "border-emerald-900/40 bg-emerald-950/20",
     warn: "border-amber-900/40 bg-amber-950/20",
     critical: "border-red-900/40 bg-red-950/20",
@@ -21,10 +21,10 @@ export const MetricCard = ({ label, value, trendText, tone = "neutral" }: Metric
   };
 
   return (
-  <div className={`rounded-xl border p-5 ${toneStyles[tone]}`}>
-    <p className="text-sm text-gray-400">{label}</p>
-    <p className="mt-2 text-2xl font-semibold tracking-tight text-gray-100">{value}</p>
-    {trendText ? <p className={`mt-1 text-xs ${trendStyles[tone]}`}>{trendText}</p> : null}
-  </div>
+    <div className={`rounded-2xl border p-5 shadow-[0_10px_30px_rgba(0,0,0,0.2)] ${toneStyles[tone]}`}>
+      <p className="text-sm text-slate-300">{label}</p>
+      <p className="mt-2 text-4xl font-semibold leading-none tracking-tight text-slate-50">{value}</p>
+      {trendText ? <p className={`mt-2 text-xs ${trendStyles[tone]}`}>{trendText}</p> : null}
+    </div>
   );
 };
