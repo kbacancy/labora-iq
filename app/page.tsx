@@ -107,13 +107,42 @@ export default function Home() {
 
           <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-[0_14px_40px_rgba(0,0,0,0.25)]">
             <p className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-300">Why Teams Choose LaboraIQ</p>
-            <ul className="mt-4 space-y-3 text-sm text-slate-200">
-              <li>Role-specific dashboards and action queues</li>
-              <li>Patient-to-report lifecycle control with approvals</li>
-              <li>Real-time notifications across operations</li>
-              <li>Audit, retention, and access review workflows</li>
-              <li>Organization-level tenant isolation</li>
-            </ul>
+            <div className="mt-4 grid gap-4 xl:grid-cols-[1.2fr_1fr]">
+              <div>
+                <ul className="space-y-3 text-sm text-slate-200">
+                  <li>Role-specific dashboards and action queues</li>
+                  <li>Patient-to-report lifecycle control with approvals</li>
+                  <li>Real-time notifications across operations</li>
+                  <li>Audit, retention, and access review workflows</li>
+                  <li>Organization-level tenant isolation</li>
+                </ul>
+                <div className="mt-4 rounded-xl border border-slate-800 bg-slate-950/60 p-3">
+                  <p className="text-xs uppercase tracking-[0.14em] text-slate-500">Quick Platform Snapshot</p>
+                  <p className="mt-2 text-sm text-slate-200">
+                    Patients {"->"} Orders {"->"} Samples {"->"} Results {"->"} Approval
+                  </p>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div className="rounded-xl border border-slate-800 bg-slate-950/65 p-3">
+                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Roles</p>
+                  <p className="mt-1 text-xl font-semibold text-slate-100">3</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/65 p-3">
+                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Tenant</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-100">Isolated</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/65 p-3">
+                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Governance</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-100">Audit Logs</p>
+                </div>
+                <div className="rounded-xl border border-slate-800 bg-slate-950/65 p-3">
+                  <p className="text-xs uppercase tracking-[0.12em] text-slate-500">Provisioning</p>
+                  <p className="mt-1 text-sm font-semibold text-slate-100">Invite + Password</p>
+                </div>
+              </div>
+            </div>
+            <p className="mt-4 text-xs text-slate-400">Trusted by diagnostics teams for governed workflows.</p>
           </div>
         </section>
 
