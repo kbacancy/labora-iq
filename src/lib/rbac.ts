@@ -31,7 +31,11 @@ export const hasRouteAccess = (role: string | null, pathname: string): boolean =
     return false;
   }
 
-  const entry = Object.entries(ROUTE_ROLES).find(([route]) => pathname === route || pathname.startsWith(`${route}/`));
+  const matchingEntries = Object.entries(ROUTE_ROLES)
+    .filter(([route]) => pathname === route || pathname.startsWith(`${route}/`))
+    .sort((a, b) => b[0].length - a[0].length);
+
+  const entry = matchingEntries[0];
   if (!entry) {
     return false;
   }
