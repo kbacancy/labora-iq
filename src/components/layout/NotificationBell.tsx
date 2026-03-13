@@ -1,56 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { useAuth } from "@/src/context/AuthContext";
-import { supabase } from "@/src/lib/supabase";
+import { useNotifications } from "@/src/context/NotificationsContext";
 
 export const NotificationBell = () => {
-  const { user, role } = useAuth();
-  const [unreadCount, setUnreadCount] = useState(0);
-
-  useEffect(() => {
-    if (!user || !role) {
-      return;
-    }
-
-    let active = true;
-    const channelName = `notifications-bell-${user.id}`;
-
-    const loadUnread = async () => {
-      const { count } = await supabase
-        .from("notifications")
-        .select("*", { count: "exact", head: true })
-        .or(`recipient_user_id.eq.${user.id},recipient_role.eq.${role}`)
-        .eq("is_read", false);
-
-      if (active) {
-        setUnreadCount(count ?? 0);
-      }
-    };
-
-    void loadUnread();
-    const timer = setInterval(() => {
-      void loadUnread();
-    }, 60000);
-
-    const channel = supabase
-      .channel(channelName)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "notifications" },
-        () => {
-          void loadUnread();
-        }
-      )
-      .subscribe();
-
-    return () => {
-      active = false;
-      clearInterval(timer);
-      void supabase.removeChannel(channel);
-    };
-  }, [role, user]);
+  const { unreadCount } = useNotifications();
 
   return (
     <Link

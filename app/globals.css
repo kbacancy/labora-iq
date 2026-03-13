@@ -8,6 +8,11 @@
   --muted: #99a3b8;
   --border: #273145;
   --accent: #6f8cff;
+  --scrollbar-track: rgba(10, 15, 27, 0.28);
+  --scrollbar-thumb: rgba(153, 163, 184, 0.28);
+  --scrollbar-thumb-hover: rgba(153, 163, 184, 0.44);
+  --font-geist-sans: "Aptos", "Segoe UI Variable", "Segoe UI", "Trebuchet MS", sans-serif;
+  --font-geist-mono: "Cascadia Code", "Aptos Mono", "Consolas", "SFMono-Regular", monospace;
 }
 
 @theme inline {
@@ -24,6 +29,8 @@ body {
     var(--background);
   color: var(--foreground);
   font-family: var(--font-geist-sans), sans-serif;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
 }
 
 * {
@@ -40,4 +47,59 @@ input:focus,
 select:focus,
 textarea:focus {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+*::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--scrollbar-thumb), rgba(111, 140, 255, 0.2));
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--scrollbar-thumb-hover), rgba(111, 140, 255, 0.34));
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+.scrollbar-panel {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
+}
+
+.scrollbar-panel::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.scrollbar-panel::-webkit-scrollbar-track {
+  margin: 8px 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.08), var(--scrollbar-track));
+}
+
+.scrollbar-panel::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, rgba(226, 232, 240, 0.36), rgba(148, 163, 184, 0.28));
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+
+.scrollbar-panel::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, rgba(226, 232, 240, 0.5), rgba(111, 140, 255, 0.38));
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }

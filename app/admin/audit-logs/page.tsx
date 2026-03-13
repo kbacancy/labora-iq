@@ -1,108 +1,146 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/src/lib/supabase";
 import { formatDate } from "@/src/lib/format";
+import { PageHeader } from "@/src/components/ui/PageHeader";
+import { PaginationControls } from "@/src/components/ui/PaginationControls";
+import {
+  SurfaceSection,
+  compactAccentButtonClassName,
+  inputClassName,
+  tableCellClassName,
+  tableHeadClassName,
+  tableHeaderCellClassName,
+  tableMutedCellClassName,
+  tableRowClassName,
+  tableWrapperClassName,
+} from "@/src/components/ui/surface";
 import type { AuditLog } from "@/src/types/database";
 
 export default function AuditLogsPage() {
+  const DEFAULT_PAGE_SIZE = 10;
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [totalLogs, setTotalLogs] = useState(0);
 
-  const loadLogs = async () => {
+  const loadLogs = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
 
-    let query = supabase.from("audit_logs").select("*").order("timestamp", { ascending: false }).limit(200);
+    let query = supabase
+      .from("audit_logs")
+      .select("*", { count: "exact" })
+      .order("timestamp", { ascending: false })
+      .range(from, to);
     const trimmed = search.trim();
     if (trimmed) {
       query = query.or(`action.ilike.%${trimmed}%,table_name.ilike.%${trimmed}%,record_id.ilike.%${trimmed}%`);
     }
 
-    const { data, error: queryError } = await query;
+    const { data, error: queryError, count } = await query;
     if (queryError) {
       setError(queryError.message);
       setLogs([]);
+      setTotalLogs(0);
       setLoading(false);
       return;
     }
 
     setLogs((data ?? []) as AuditLog[]);
+    setTotalLogs(count ?? 0);
     setLoading(false);
-  };
+  }, [page, pageSize, search]);
 
   useEffect(() => {
-    void loadLogs();
-  }, []);
+    const timer = setTimeout(() => {
+      void loadLogs();
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [loadLogs]);
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-2">
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search action, table, or record id"
-          className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-        />
-        <button
-          type="button"
-          onClick={() => void loadLogs()}
-          className="rounded-lg border border-gray-700 px-3 py-2 text-sm text-gray-200 transition hover:border-indigo-400"
-        >
-          Search
-        </button>
-      </div>
-
-      <section className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
-        <div className="border-b border-gray-800 px-4 py-3">
-          <h2 className="text-lg font-medium">Audit Logs</h2>
-          <p className="text-sm text-gray-400">Most recent 200 events.</p>
+      <PageHeader title="Audit Logs" description="Search the most recent governed events across workflow, access, and administrative changes." eyebrow="Governance trace" />
+      <SurfaceSection eyebrow="Log query" title="Search recent events" description="Inspect governed events by action, table, or record reference." className="mb-5">
+        <div className="flex flex-col gap-3 md:flex-row">
+          <input
+            value={search}
+            onChange={(event) => {
+              setSearch(event.target.value);
+              setPage(1);
+            }}
+            placeholder="Search action, table, or record id"
+            className={inputClassName}
+          />
+          <button type="button" onClick={() => void loadLogs()} className={compactAccentButtonClassName}>
+            Search Logs
+          </button>
         </div>
+      </SurfaceSection>
 
+      <section className={tableWrapperClassName}>
         <table className="min-w-full text-sm">
-          <thead className="border-b border-gray-800 text-left text-gray-400">
+          <thead className={tableHeadClassName}>
             <tr>
-              <th className="px-4 py-3 font-medium">When</th>
-              <th className="px-4 py-3 font-medium">Action</th>
-              <th className="px-4 py-3 font-medium">Table</th>
-              <th className="px-4 py-3 font-medium">Record</th>
-              <th className="px-4 py-3 font-medium">User</th>
+              <th className={tableHeaderCellClassName}>When</th>
+              <th className={tableHeaderCellClassName}>Action</th>
+              <th className={tableHeaderCellClassName}>Table</th>
+              <th className={tableHeaderCellClassName}>Record</th>
+              <th className={tableHeaderCellClassName}>User</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={5} className="px-5 py-8 text-center text-slate-400">
                   Loading audit logs...
                 </td>
               </tr>
             ) : error ? (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-red-400">
+                <td colSpan={5} className="px-5 py-8 text-center text-red-300">
                   {error}
                 </td>
               </tr>
             ) : logs.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={5} className="px-5 py-8 text-center text-slate-400">
                   No audit logs found.
                 </td>
               </tr>
             ) : (
               logs.map((log) => (
-                <tr key={log.id} className="border-t border-gray-800 text-gray-200">
-                  <td className="px-4 py-3 text-gray-400">{formatDate(log.timestamp)}</td>
-                  <td className="px-4 py-3">{log.action}</td>
-                  <td className="px-4 py-3">{log.table_name}</td>
-                  <td className="px-4 py-3 text-gray-400">{log.record_id ?? "-"}</td>
-                  <td className="px-4 py-3 text-gray-400">{log.user_id ?? "-"}</td>
+                <tr key={log.id} className={tableRowClassName}>
+                  <td className={tableMutedCellClassName}>{formatDate(log.timestamp)}</td>
+                  <td className={tableCellClassName}>{log.action}</td>
+                  <td className={tableCellClassName}>{log.table_name}</td>
+                  <td className={tableMutedCellClassName}>{log.record_id ?? "-"}</td>
+                  <td className={tableMutedCellClassName}>{log.user_id ?? "-"}</td>
                 </tr>
               ))
             )}
           </tbody>
         </table>
+        {!loading && !error && totalLogs > 0 ? (
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={totalLogs}
+            onPageChange={setPage}
+            onPageSizeChange={(nextPageSize) => {
+              setPageSize(nextPageSize);
+              setPage(1);
+            }}
+          />
+        ) : null}
       </section>
     </div>
   );

@@ -83,6 +83,12 @@ const statusToneClass = (status: string) => {
   return "bg-blue-600/20 text-blue-300";
 };
 
+const urgencyToneClass = (tone: UrgencyItem["tone"]) => {
+  if (tone === "good") return "border-emerald-900/50 bg-emerald-950/15 text-emerald-300";
+  if (tone === "critical") return "border-red-900/50 bg-red-950/15 text-red-300";
+  return "border-amber-900/50 bg-amber-950/15 text-amber-300";
+};
+
 export default function DashboardPage() {
   const { role, user } = useAuth();
   const [metrics, setMetrics] = useState<DashboardMetric[]>([]);
@@ -265,8 +271,8 @@ export default function DashboardPage() {
           setFocusEmptyCta({ href: "/dashboard/results", label: "Open Results Workflow" });
           setFocusRows(
             (approvalRows ?? []).map((row) => ({
-              primary: `Order ${row.id.slice(0, 8)}`,
-              secondary: `${patientNames.get(row.patient_id) ?? "Unknown Patient"} - ${formatDate(row.created_at)}`,
+              primary: patientNames.get(row.patient_id) ?? "Patient record unavailable",
+              secondary: `Awaiting ${row.approval_status ?? "draft"} review • ${formatDate(row.created_at)}`,
               status: row.approval_status ?? "draft",
               href: `/dashboard/results?orderId=${row.id}`,
             }))
@@ -288,6 +294,7 @@ export default function DashboardPage() {
             { count: pendingOrders },
             { count: patientsToday },
             { count: unreadNotifications },
+            { count: completedApprovedToday },
             { data: orderRows },
           ] = await Promise.all([
             supabase.from("lab_orders").select("*", { count: "exact", head: true }).gte("created_at", todayIso),
@@ -297,17 +304,24 @@ export default function DashboardPage() {
               .gte("created_at", yesterdayIso)
               .lt("created_at", todayIso),
             supabase.from("lab_orders").select("*", { count: "exact", head: true }).neq("status", "completed"),
-            supabase.from("patients").select("*", { count: "exact", head: true }).gte("created_at", todayIso).eq("is_archived", false),
-            supabase
-              .from("notifications")
-              .select("*", { count: "exact", head: true })
-              .or(`recipient_user_id.eq.${user?.id ?? ""},recipient_role.eq.receptionist`)
-              .eq("is_read", false),
-            supabase
-              .from("lab_orders")
-              .select("id,patient_id,status,total_price,created_at")
-              .neq("status", "completed")
-              .order("created_at", { ascending: false })
+              supabase.from("patients").select("*", { count: "exact", head: true }).gte("created_at", todayIso).eq("is_archived", false),
+              supabase
+                .from("notifications")
+                .select("*", { count: "exact", head: true })
+                .or(`recipient_user_id.eq.${user?.id ?? ""},recipient_role.eq.receptionist`)
+                .eq("is_read", false),
+              supabase
+                .from("lab_orders")
+                .select("*", { count: "exact", head: true })
+                .eq("status", "completed")
+                .eq("approval_status", "approved")
+                .gte("completed_at", todayIso)
+                .lt("completed_at", tomorrowIso),
+              supabase
+                .from("lab_orders")
+                .select("id,patient_id,status,total_price,created_at")
+                .neq("status", "completed")
+                .order("created_at", { ascending: false })
               .limit(8),
           ]);
 
@@ -318,19 +332,25 @@ export default function DashboardPage() {
               trendText: formatDiff(todaysOrders ?? 0, yesterdaysOrders ?? 0, "orders"),
               tone: (todaysOrders ?? 0) > 0 ? "good" : "neutral",
             },
-            {
-              label: "Pending Orders",
-              value: String(pendingOrders ?? 0),
-              trendText: (pendingOrders ?? 0) > 0 ? "Needs assignment and progression" : "Queue clear",
-              tone: (pendingOrders ?? 0) > 0 ? "warn" : "good",
-            },
-          ]);
+              {
+                label: "Pending Orders",
+                value: String(pendingOrders ?? 0),
+                trendText: (pendingOrders ?? 0) > 0 ? "Needs assignment and progression" : "Queue clear",
+                tone: (pendingOrders ?? 0) > 0 ? "warn" : "good",
+              },
+              {
+                label: "Patients Added Today",
+                value: String(patientsToday ?? 0),
+                trendText: (patientsToday ?? 0) > 0 ? "Intake moving through reception" : "No new registrations yet",
+                tone: (patientsToday ?? 0) > 0 ? "good" : "neutral",
+              },
+            ]);
 
           setUrgencyItems([
-            { label: "Patients Added Today", value: patientsToday ?? 0, href: "/dashboard/patients", tone: "good" },
-            { label: "Orders Awaiting Work", value: pendingOrders ?? 0, href: "/dashboard/orders", tone: (pendingOrders ?? 0) > 0 ? "warn" : "good" },
-            { label: "Unread Alerts", value: unreadNotifications ?? 0, href: "/dashboard/notifications", tone: (unreadNotifications ?? 0) > 0 ? "warn" : "good" },
-          ]);
+              { label: "Orders Awaiting Work", value: pendingOrders ?? 0, href: "/dashboard/orders", tone: (pendingOrders ?? 0) > 0 ? "warn" : "good" },
+              { label: "Reports Ready", value: completedApprovedToday ?? 0, href: "/dashboard/reports", tone: "good" },
+              { label: "Unread Alerts", value: unreadNotifications ?? 0, href: "/dashboard/notifications", tone: (unreadNotifications ?? 0) > 0 ? "warn" : "good" },
+            ]);
 
           setActionItems([
             {
@@ -375,7 +395,7 @@ export default function DashboardPage() {
           setFocusEmptyCta({ href: "/dashboard/orders/new", label: "Create New Order" });
           setFocusRows(
             (orderRows ?? []).map((row) => ({
-              primary: patientNames.get(row.patient_id) ?? `Order ${row.id.slice(0, 8)}`,
+              primary: patientNames.get(row.patient_id) ?? "Patient record unavailable",
               secondary: `${formatCurrency(Number(row.total_price ?? 0))} - ${formatDate(row.created_at)}`,
               status: row.status,
               href: "/dashboard/orders",
@@ -384,7 +404,7 @@ export default function DashboardPage() {
 
           setRecentItems(
             (orderRows ?? []).slice(0, 6).map((row) => ({
-              title: `Order ${row.id.slice(0, 8)}`,
+              title: patientNames.get(row.patient_id) ?? "Order intake",
               subtitle: `${row.status} - ${formatCurrency(Number(row.total_price ?? 0))}`,
               time: row.created_at,
             }))
@@ -521,24 +541,20 @@ export default function DashboardPage() {
     void loadDashboard();
   }, [role, user?.id]);
 
-  const urgencyToneClass = (tone: UrgencyItem["tone"]) => {
-    if (tone === "good") return "border-emerald-900/50 bg-emerald-950/20 text-emerald-300";
-    if (tone === "critical") return "border-red-900/50 bg-red-950/20 text-red-300";
-    return "border-amber-900/50 bg-amber-950/20 text-amber-300";
-  };
-
   return (
     <div>
       <PageHeader title="Dashboard" description="Live operational metrics for your laboratory." />
 
       {error ? (
-        <div className="mb-4 rounded-2xl border border-red-900/50 bg-red-950/30 p-4 text-sm text-red-300">{error}</div>
+        <div className="mb-6 rounded-[1.75rem] border border-red-900/50 bg-red-950/30 p-5 text-sm text-red-300 shadow-[0_16px_40px_rgba(0,0,0,0.18)]">
+          {error}
+        </div>
       ) : null}
 
       {loading ? (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {[...Array(4)].map((_, index) => (
-            <div key={index} className="h-28 animate-pulse rounded-2xl border border-slate-800/70 bg-slate-900/60" />
+            <div key={index} className="h-36 animate-pulse rounded-[1.75rem] border border-slate-800/70 bg-slate-900/60" />
           ))}
         </div>
       ) : (
@@ -556,16 +572,25 @@ export default function DashboardPage() {
       )}
 
       {!loading ? (
-        <section className="mt-4 rounded-2xl border border-slate-800/80 bg-slate-900/65 p-4 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-sm font-semibold uppercase tracking-[0.2em] text-slate-200">Urgency Radar</h2>
-            <span className="text-xs text-slate-500">Role: {role}</span>
+        <section className="mt-5 rounded-[2rem] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.8),rgba(15,23,42,0.62))] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.24)]">
+          <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.28em] text-blue-300">Operational pressure</p>
+              <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-100">Urgency Radar</h2>
+            </div>
+            <span className="rounded-full border border-slate-700 bg-slate-950/55 px-3 py-1 text-[10px] uppercase tracking-[0.18em] text-slate-400">
+              Role: {role}
+            </span>
           </div>
           <div className="grid gap-3 md:grid-cols-3">
             {urgencyItems.map((item) => (
-              <Link key={item.label} href={item.href} className={`rounded-xl border px-3 py-2 transition hover:opacity-90 ${urgencyToneClass(item.tone)}`}>
-                <p className="text-xs">{item.label}</p>
-                <p className="mt-1 text-xl font-semibold">{item.value}</p>
+              <Link
+                key={item.label}
+                href={item.href}
+                className={`rounded-2xl border px-4 py-4 transition hover:-translate-y-0.5 hover:opacity-95 ${urgencyToneClass(item.tone)}`}
+              >
+                <p className="text-[11px] uppercase tracking-[0.2em]">{item.label}</p>
+                <p className="mt-4 text-4xl font-semibold tracking-[-0.04em]">{item.value}</p>
               </Link>
             ))}
           </div>
@@ -575,23 +600,26 @@ export default function DashboardPage() {
       {loading ? (
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
           {[...Array(2)].map((_, index) => (
-            <div key={index} className="h-52 animate-pulse rounded-2xl border border-slate-800/70 bg-slate-900/60" />
+            <div key={index} className="h-64 animate-pulse rounded-[2rem] border border-slate-800/70 bg-slate-900/60" />
           ))}
         </div>
       ) : (
         <div className="mt-4 grid gap-4 lg:grid-cols-2">
-          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/65 p-5 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-2xl font-semibold tracking-tight text-slate-100">Action Queue</h2>
-              <span className="text-xs text-slate-500">{role}</span>
+          <section className="rounded-[2rem] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.8),rgba(15,23,42,0.62))] p-6 shadow-[0_18px_50px_rgba(0,0,0,0.24)]">
+            <div className="mb-5 flex items-center justify-between">
+              <div>
+                <p className="text-[10px] uppercase tracking-[0.24em] text-blue-300">Priority execution</p>
+                <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-100">Action Queue</h2>
+              </div>
+              <span className="text-xs uppercase tracking-[0.16em] text-slate-500">{role}</span>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
               {actionItems.map((item) => (
-                <div key={item.label} className="rounded-xl border border-slate-800 bg-slate-950/70 p-3">
-                  <p className="text-xs text-slate-300">{item.label}</p>
-                  {item.value ? <p className="mt-1 text-3xl font-semibold text-slate-100">{item.value}</p> : null}
-                  {item.detail ? <p className="mt-1 text-xs text-slate-400">{item.detail}</p> : null}
-                  <Link href={item.href} className="mt-2 inline-block text-xs text-blue-300 hover:text-blue-200">
+                <div key={item.label} className="rounded-2xl border border-slate-800 bg-slate-950/70 p-4">
+                  <p className="text-sm leading-6 text-slate-200">{item.label}</p>
+                  {item.value ? <p className="mt-3 text-4xl font-semibold tracking-[-0.04em] text-slate-50">{item.value}</p> : null}
+                  {item.detail ? <p className="mt-3 text-sm leading-6 text-slate-400">{item.detail}</p> : null}
+                  <Link href={item.href} className="mt-4 inline-block text-sm font-medium text-blue-300 hover:text-blue-200">
                     {item.cta}
                   </Link>
                 </div>
@@ -599,19 +627,20 @@ export default function DashboardPage() {
             </div>
           </section>
 
-          <section className="rounded-2xl border border-slate-800/80 bg-slate-900/65 p-5 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
-            <h2 className="mb-3 text-2xl font-semibold tracking-tight text-slate-100">Recent Activity</h2>
+          <section className="rounded-[2rem] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.8),rgba(15,23,42,0.62))] p-6 shadow-[0_18px_50px_rgba(0,0,0,0.24)]">
+            <p className="text-[10px] uppercase tracking-[0.24em] text-blue-300">Recent signal</p>
+            <h2 className="mb-5 mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-100">Recent Activity</h2>
             {recentItems.length === 0 ? (
-              <div className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-5">
+              <div className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-6">
                 <p className="text-sm text-slate-400">No recent activity.</p>
               </div>
             ) : (
               <div className="space-y-2">
                 {recentItems.map((item, index) => (
-                  <div key={`${item.title}-${index}`} className="rounded-xl border border-slate-800 bg-slate-950/70 px-3 py-2" title={formatDate(item.time)}>
-                    <p className="text-sm font-medium text-slate-200">{item.title}</p>
-                    <p className="text-xs text-slate-300">{item.subtitle}</p>
-                    <p className="text-xs text-slate-400">{formatRelativeTime(item.time)}</p>
+                  <div key={`${item.title}-${index}`} className="rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3" title={formatDate(item.time)}>
+                    <p className="text-base font-medium text-slate-200">{item.title}</p>
+                    <p className="mt-1 text-sm text-slate-300">{item.subtitle}</p>
+                    <p className="mt-2 text-xs uppercase tracking-[0.16em] text-slate-500">{formatRelativeTime(item.time)}</p>
                   </div>
                 ))}
               </div>
@@ -621,20 +650,21 @@ export default function DashboardPage() {
       )}
 
       {!loading && insight ? (
-        <section className="mt-4 rounded-2xl border border-blue-900/30 bg-gradient-to-r from-slate-900/90 to-blue-950/25 p-5">
-          <p className="text-xs uppercase tracking-[0.2em] text-blue-300">Insight</p>
-          <p className="mt-1 text-2xl font-semibold tracking-tight text-slate-100">{insight.title}</p>
-          <p className="mt-1 text-sm text-slate-300">{insight.body}</p>
+        <section className="mt-4 rounded-[2rem] border border-blue-900/30 bg-[linear-gradient(135deg,rgba(15,23,42,0.92),rgba(15,23,42,0.82)_52%,rgba(29,78,216,0.12))] p-6 shadow-[0_18px_50px_rgba(0,0,0,0.24)]">
+          <p className="text-[10px] uppercase tracking-[0.28em] text-blue-300">Command insight</p>
+          <p className="mt-3 text-3xl font-semibold tracking-[-0.04em] text-slate-100">{insight.title}</p>
+          <p className="mt-3 max-w-4xl text-sm leading-7 text-slate-300">{insight.body}</p>
         </section>
       ) : null}
 
       {!loading ? (
-        <section className="mt-4 overflow-hidden rounded-2xl border border-slate-800/80 bg-slate-900/65 shadow-[0_10px_28px_rgba(0,0,0,0.22)]">
-          <div className="border-b border-slate-800 px-4 py-3">
-            <h2 className="text-2xl font-semibold tracking-tight text-slate-100">{focusTitle}</h2>
+        <section className="mt-4 overflow-hidden rounded-[2rem] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.82),rgba(15,23,42,0.66))] shadow-[0_18px_50px_rgba(0,0,0,0.24)]">
+          <div className="border-b border-slate-800 px-5 py-4">
+            <p className="text-[10px] uppercase tracking-[0.24em] text-blue-300">Focused workload</p>
+            <h2 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-slate-100">{focusTitle}</h2>
           </div>
           <table className="min-w-full text-sm">
-            <thead className="border-b border-slate-800 text-left text-slate-400">
+            <thead className="border-b border-slate-800 text-left text-slate-500">
               <tr>
                 <th className="px-4 py-3 font-medium">Item</th>
                 <th className="px-4 py-3 font-medium">Details</th>
@@ -662,8 +692,8 @@ export default function DashboardPage() {
               ) : (
                 focusRows.map((row, index) => (
                   <tr key={`${row.primary}-${index}`} className="border-t border-slate-800 text-slate-200">
-                    <td className="px-4 py-3">{row.primary}</td>
-                    <td className="px-4 py-3 text-slate-400">{row.secondary}</td>
+                    <td className="px-4 py-4 font-medium">{row.primary}</td>
+                    <td className="px-4 py-4 text-slate-400">{row.secondary}</td>
                     <td className="px-4 py-3">
                       <span className={`rounded-md px-2 py-1 text-xs uppercase ${statusToneClass(row.status)}`}>{row.status}</span>
                       {row.status.toLowerCase().includes("overdue") ? (
@@ -671,7 +701,7 @@ export default function DashboardPage() {
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
-                      <Link href={row.href} className="rounded-md border border-blue-800 px-2 py-1 text-xs text-blue-300 hover:border-blue-600">
+                      <Link href={row.href} className="rounded-xl border border-blue-800 px-3 py-1.5 text-xs uppercase tracking-[0.16em] text-blue-300 hover:border-blue-600">
                         Open
                       </Link>
                     </td>

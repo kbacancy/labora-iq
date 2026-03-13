@@ -1,12 +1,32 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { useCallback, useEffect, useState } from "react";
+import { useForm, useWatch } from "react-hook-form";
 import { useAuth } from "@/src/context/AuthContext";
 import type { Role } from "@/src/types/database";
 import { formatDate } from "@/src/lib/format";
 import { supabase } from "@/src/lib/supabase";
+import { createUserSchema, labSettingsSchema } from "@/src/lib/validation";
+import { PageHeader } from "@/src/components/ui/PageHeader";
+import { PaginationControls } from "@/src/components/ui/PaginationControls";
+import {
+  StatusBadge,
+  SurfaceSection,
+  compactButtonClassName,
+  compactDangerButtonClassName,
+  errorTextClassName,
+  fieldLabelClassName,
+  inputClassName,
+  primaryButtonClassName,
+  selectClassName,
+  successTextClassName,
+  tableCellClassName,
+  tableHeadClassName,
+  tableHeaderCellClassName,
+  tableMutedCellClassName,
+  tableRowClassName,
+  tableWrapperClassName,
+} from "@/src/components/ui/surface";
 
 interface AdminUser {
   id: string;
@@ -34,25 +54,16 @@ interface Organization {
   created_at: string;
 }
 
-const userSchema = z.object({
-  provisioning: z.enum(["invite", "password"]),
-  email: z.email("Enter a valid email."),
-  password: z.string().optional(),
-  full_name: z.string().min(2, "Full name is required."),
-  role: z.enum(["admin", "receptionist", "technician"]),
-}).superRefine((values, ctx) => {
-  if (values.provisioning === "password" && (!values.password || values.password.length < 8)) {
-    ctx.addIssue({
-      code: "custom",
-      path: ["password"],
-      message: "Password must be at least 8 characters.",
-    });
-  }
-});
-
-type UserFormValues = z.infer<typeof userSchema>;
+type UserFormValues = {
+  provisioning: "invite" | "password";
+  email: string;
+  password?: string;
+  full_name: string;
+  role: Role;
+};
 
 export default function AdminPage() {
+  const DEFAULT_PAGE_SIZE = 10;
   const { role } = useAuth();
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [loading, setLoading] = useState(true);
@@ -60,11 +71,13 @@ export default function AdminPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [busyUserId, setBusyUserId] = useState<string | null>(null);
-  const [settings, setSettings] = useState<LabSettings | null>(null);
   const [organization, setOrganization] = useState<Organization | null>(null);
   const [organizationName, setOrganizationName] = useState("");
   const [organizationSaving, setOrganizationSaving] = useState(false);
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [totalUsers, setTotalUsers] = useState(0);
   const [settingsForm, setSettingsForm] = useState({
     lab_name: "",
     address: "",
@@ -74,12 +87,17 @@ export default function AdminPage() {
     report_footer: "",
   });
 
-  const { register, handleSubmit, reset, watch } = useForm<UserFormValues>({
+  const { control, register, handleSubmit, reset } = useForm<UserFormValues>({
     defaultValues: { provisioning: "invite", email: "", password: "", full_name: "", role: "receptionist" },
   });
-  const provisioningMode = watch("provisioning");
+  const provisioningMode = useWatch({ control, name: "provisioning" });
 
-  const loadUsers = async () => {
+  const getAccessToken = useCallback(async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    return sessionData.session?.access_token ?? null;
+  }, []);
+
+  const loadUsers = useCallback(async () => {
     if (role !== "admin") {
       return;
     }
@@ -92,11 +110,12 @@ export default function AdminPage() {
     if (!token) {
       setError("No active session token.");
       setUsers([]);
+      setTotalUsers(0);
       setLoading(false);
       return;
     }
 
-    const response = await fetch("/api/admin/users", {
+    const response = await fetch(`/api/admin/users?page=${page}&pageSize=${pageSize}`, {
       headers: {
         Authorization: `Bearer ${token}`,
       },
@@ -106,28 +125,40 @@ export default function AdminPage() {
     if (!response.ok) {
       setError(payload.error ?? "Failed to load users.");
       setUsers([]);
+      setTotalUsers(0);
       setLoading(false);
       return;
     }
 
     setUsers(payload.data ?? []);
+    setTotalUsers(payload.total ?? 0);
     setLoading(false);
-  };
+  }, [page, pageSize, role]);
 
-  const loadSettings = async () => {
-    const { data, error: settingsError } = await supabase
-      .from("lab_settings")
-      .select("id,lab_name,address,phone,email,logo_url,accreditation,report_footer")
-      .eq("singleton", true)
-      .maybeSingle();
-
-    if (settingsError) {
-      setError(settingsError.message);
+  const loadSettings = useCallback(async () => {
+    const token = await getAccessToken();
+    if (!token) {
+      setError("No active session token.");
       return;
     }
 
+    const response = await fetch("/api/admin/settings", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      data?: LabSettings | null;
+    };
+
+    if (!response.ok) {
+      setError(payload.error ?? "Failed to load lab settings.");
+      return;
+    }
+
+    const data = payload.data ?? null;
     if (!data) {
-      setSettings(null);
       setSettingsForm({
         lab_name: "",
         address: "",
@@ -139,7 +170,6 @@ export default function AdminPage() {
       return;
     }
 
-    setSettings(data);
     setSettingsForm({
       lab_name: data.lab_name ?? "",
       address: data.address ?? "",
@@ -148,9 +178,9 @@ export default function AdminPage() {
       accreditation: data.accreditation ?? "",
       report_footer: data.report_footer ?? "",
     });
-  };
+  }, [getAccessToken]);
 
-  const loadOrganization = async () => {
+  const loadOrganization = useCallback(async () => {
     const token = await getAccessToken();
     if (!token) {
       return;
@@ -171,12 +201,7 @@ export default function AdminPage() {
     const org = payload.data as Organization;
     setOrganization(org);
     setOrganizationName(org?.name ?? "");
-  };
-
-  const getAccessToken = async () => {
-    const { data: sessionData } = await supabase.auth.getSession();
-    return sessionData.session?.access_token ?? null;
-  };
+  }, [getAccessToken]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -185,7 +210,7 @@ export default function AdminPage() {
       void loadOrganization();
     }, 0);
     return () => clearTimeout(timer);
-  }, [role]);
+  }, [loadOrganization, loadSettings, loadUsers]);
 
   const saveOrganization = async () => {
     const trimmed = organizationName.trim();
@@ -225,38 +250,48 @@ export default function AdminPage() {
   };
 
   const saveSettings = async () => {
+    const parsed = labSettingsSchema.safeParse(settingsForm);
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Invalid lab settings.");
+      return;
+    }
+
     setSettingsSaving(true);
     setError(null);
     setSuccess(null);
 
-    const payload = {
-      singleton: true,
-      lab_name: settingsForm.lab_name.trim() || "LaboraIQ Laboratory",
-      address: settingsForm.address.trim() || null,
-      phone: settingsForm.phone.trim() || null,
-      email: settingsForm.email.trim() || null,
-      accreditation: settingsForm.accreditation.trim() || null,
-      report_footer: settingsForm.report_footer.trim() || null,
-    };
-
-    const query = settings?.id
-      ? supabase.from("lab_settings").update(payload).eq("id", settings.id)
-      : supabase.from("lab_settings").insert(payload);
-
-    const { error: saveError } = await query;
-    setSettingsSaving(false);
-
-    if (saveError) {
-      setError(saveError.message);
+    const token = await getAccessToken();
+    if (!token) {
+      setSettingsSaving(false);
+      setError("No active session token.");
       return;
     }
 
-    setSuccess("Lab settings updated.");
+    const response = await fetch("/api/admin/settings", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(parsed.data),
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+    };
+    setSettingsSaving(false);
+
+    if (!response.ok) {
+      setError(payload.error ?? "Unable to update lab settings.");
+      return;
+    }
+
+    setSuccess(payload.message ?? "Lab settings updated.");
     await loadSettings();
   };
 
   const onSubmit = handleSubmit(async (values) => {
-    const parsed = userSchema.safeParse(values);
+    const parsed = createUserSchema.safeParse(values);
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid input.");
       return;
@@ -292,6 +327,10 @@ export default function AdminPage() {
 
     setSuccess(payload.message ?? "Action completed.");
     reset({ provisioning: values.provisioning, email: "", password: "", full_name: "", role: "receptionist" });
+    if (page !== 1) {
+      setPage(1);
+      return;
+    }
     await loadUsers();
   });
 
@@ -411,227 +450,198 @@ export default function AdminPage() {
       return;
     }
     setSuccess("User deleted.");
+    if (users.length === 1 && page > 1) {
+      setPage((current) => current - 1);
+      return;
+    }
     await loadUsers();
   };
 
   return (
     <div className="space-y-5">
-      <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-        <h2 className="text-lg font-medium">Organization Profile</h2>
-        <p className="mb-4 text-sm text-gray-400">Manage tenant identity for this laboratory workspace.</p>
+      <PageHeader title="Admin Console" description="Control tenant identity, report settings, and workspace user provisioning from one governance surface." eyebrow="Administrative control" />
+
+      {error ? <p className={errorTextClassName}>{error}</p> : null}
+      {success ? <p className={successTextClassName}>{success}</p> : null}
+
+      <SurfaceSection eyebrow="Tenant identity" title="Organization profile" description="Manage the tenant identity that anchors this laboratory workspace.">
         <div className="grid gap-3 md:grid-cols-3">
           <input
             value={organizationName}
             onChange={(event) => setOrganizationName(event.target.value)}
             placeholder="Organization name"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm md:col-span-2"
+            className={`${inputClassName} md:col-span-2`}
           />
-          <div className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2 text-xs text-gray-400">
+          <div className="rounded-2xl border border-slate-800 bg-slate-950/75 px-4 py-3 text-xs text-slate-400">
             Created: {organization?.created_at ? formatDate(organization.created_at) : "-"}
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void saveOrganization()}
-          disabled={organizationSaving}
-          className="mt-4 rounded-lg border border-indigo-700 px-4 py-2 text-sm text-indigo-300 transition hover:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-        >
+        <button type="button" onClick={() => void saveOrganization()} disabled={organizationSaving} className={`mt-4 ${primaryButtonClassName}`}>
           {organizationSaving ? "Saving..." : "Save Organization"}
         </button>
-      </section>
+      </SurfaceSection>
 
-      <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-        <h2 className="text-lg font-medium">Lab Report Settings</h2>
-        <p className="mb-4 text-sm text-gray-400">Configure header and footer details used in downloadable reports.</p>
+      <SurfaceSection eyebrow="Report identity" title="Lab report settings" description="Configure the metadata used in generated reports and release documents.">
         <div className="grid gap-3 md:grid-cols-2">
           <input
             value={settingsForm.lab_name}
             onChange={(event) => setSettingsForm((current) => ({ ...current, lab_name: event.target.value }))}
             placeholder="Lab name"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+            className={inputClassName}
           />
           <input
             value={settingsForm.email}
             onChange={(event) => setSettingsForm((current) => ({ ...current, email: event.target.value }))}
             placeholder="Report contact email"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+            className={inputClassName}
           />
           <input
             value={settingsForm.phone}
             onChange={(event) => setSettingsForm((current) => ({ ...current, phone: event.target.value }))}
             placeholder="Report contact phone"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+            className={inputClassName}
           />
           <input
             value={settingsForm.accreditation}
             onChange={(event) => setSettingsForm((current) => ({ ...current, accreditation: event.target.value }))}
             placeholder="Accreditation / license"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+            className={inputClassName}
           />
           <input
             value={settingsForm.address}
             onChange={(event) => setSettingsForm((current) => ({ ...current, address: event.target.value }))}
             placeholder="Lab address"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm md:col-span-2"
+            className={`${inputClassName} md:col-span-2`}
           />
           <input
             value={settingsForm.report_footer}
             onChange={(event) => setSettingsForm((current) => ({ ...current, report_footer: event.target.value }))}
             placeholder="Report footer/disclaimer"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm md:col-span-2"
+            className={`${inputClassName} md:col-span-2`}
           />
         </div>
-        <button
-          type="button"
-          onClick={() => void saveSettings()}
-          disabled={settingsSaving}
-          className="mt-4 rounded-lg border border-indigo-700 px-4 py-2 text-sm text-indigo-300 transition hover:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-        >
+        <button type="button" onClick={() => void saveSettings()} disabled={settingsSaving} className={`mt-4 ${primaryButtonClassName}`}>
           {settingsSaving ? "Saving..." : "Save Settings"}
         </button>
-      </section>
+      </SurfaceSection>
 
       <div className="grid gap-5 lg:grid-cols-5">
-      <section className="rounded-xl border border-gray-800 bg-gray-900 p-5 lg:col-span-2">
-        <h2 className="text-lg font-medium">Create User</h2>
-        <p className="mb-4 text-sm text-gray-400">Provision internal staff by invite link or direct password setup.</p>
-        <form onSubmit={onSubmit} className="space-y-3">
-          <select
-            {...register("provisioning")}
-            className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-          >
-            <option value="invite">Send Invite Link (recommended)</option>
-            <option value="password">Create with Password</option>
-          </select>
-          <input
-            {...register("full_name")}
-            placeholder="Full name"
-            className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-          />
-          <input
-            {...register("email")}
-            placeholder="Email"
-            type="email"
-            className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-          />
-          {provisioningMode === "password" ? (
-            <input
-              {...register("password")}
-              placeholder="Temporary password"
-              type="password"
-              className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-            />
-          ) : null}
-          <select
-            {...register("role")}
-            className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-          >
-            <option value="admin">Admin</option>
-            <option value="receptionist">Receptionist</option>
-            <option value="technician">Technician</option>
-          </select>
+        <SurfaceSection eyebrow="Provisioning" title="Create user" description="Provision internal staff by invite link or direct password setup." className="lg:col-span-2">
+          <form onSubmit={onSubmit} className="space-y-3">
+            <label>
+              <span className={fieldLabelClassName}>Provisioning mode</span>
+              <select {...register("provisioning")} className={selectClassName}>
+                <option value="invite">Send Invite Link (recommended)</option>
+                <option value="password">Create with Password</option>
+              </select>
+            </label>
+            <label>
+              <span className={fieldLabelClassName}>Full name</span>
+              <input {...register("full_name")} placeholder="Full name" className={inputClassName} />
+            </label>
+            <label>
+              <span className={fieldLabelClassName}>Email</span>
+              <input {...register("email")} placeholder="Email" type="email" className={inputClassName} />
+            </label>
+            {provisioningMode === "password" ? (
+              <label>
+                <span className={fieldLabelClassName}>Temporary password</span>
+                <input {...register("password")} placeholder="Temporary password" type="password" className={inputClassName} />
+              </label>
+            ) : null}
+            <label>
+              <span className={fieldLabelClassName}>Role</span>
+              <select {...register("role")} className={selectClassName}>
+                <option value="admin">Admin</option>
+                <option value="receptionist">Receptionist</option>
+                <option value="technician">Technician</option>
+              </select>
+            </label>
+            <button type="submit" disabled={submitting} className={primaryButtonClassName}>
+              {submitting ? "Submitting..." : "Submit"}
+            </button>
+          </form>
+        </SurfaceSection>
 
-          {error ? <p className="text-sm text-red-400">{error}</p> : null}
-          {success ? <p className="text-sm text-emerald-300">{success}</p> : null}
-
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {submitting ? "Submitting..." : "Submit"}
-          </button>
-        </form>
-      </section>
-
-      <section className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900 lg:col-span-3">
-        <div className="border-b border-gray-800 px-4 py-3">
-          <h2 className="text-lg font-medium">Users</h2>
-        </div>
-        <table className="min-w-full text-sm">
-          <thead className="border-b border-gray-800 text-left text-gray-400">
-            <tr>
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Email</th>
-              <th className="px-4 py-3 font-medium">Role</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Created</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {loading ? (
+        <section className={`${tableWrapperClassName} lg:col-span-3`}>
+          <table className="min-w-full text-sm">
+            <thead className={tableHeadClassName}>
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
-                  Loading users...
-                </td>
+                <th className={tableHeaderCellClassName}>Name</th>
+                <th className={tableHeaderCellClassName}>Email</th>
+                <th className={tableHeaderCellClassName}>Role</th>
+                <th className={tableHeaderCellClassName}>Status</th>
+                <th className={tableHeaderCellClassName}>Created</th>
+                <th className={tableHeaderCellClassName}>Actions</th>
               </tr>
-            ) : users.length === 0 ? (
-              <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
-                  No users found.
-                </td>
-              </tr>
-            ) : (
-              users.map((item) => (
-                <tr key={item.id} className="border-t border-gray-800 text-gray-200">
-                  <td className="px-4 py-3">{item.full_name}</td>
-                  <td className="px-4 py-3 text-gray-400">{item.email || "-"}</td>
-                  <td className="px-4 py-3">
-                    <select
-                      value={item.role}
-                      onChange={(event) => void updateUserRole(item.id, event.target.value as Role)}
-                      disabled={busyUserId === item.id}
-                      className="rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-xs capitalize"
-                    >
-                      <option value="admin">Admin</option>
-                      <option value="receptionist">Receptionist</option>
-                      <option value="technician">Technician</option>
-                    </select>
-                  </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-md px-2 py-1 text-xs ${
-                        item.is_disabled
-                          ? "bg-red-600/20 text-red-300"
-                          : "bg-emerald-600/20 text-emerald-300"
-                      }`}
-                    >
-                      {item.is_disabled ? "Disabled" : "Active"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-3 text-gray-400">{formatDate(item.created_at)}</td>
-                  <td className="px-4 py-3">
-                    <div className="flex flex-wrap gap-2">
-                      <button
-                        onClick={() => void sendResetLink(item.id)}
-                        disabled={busyUserId === item.id}
-                        className="rounded-md border border-gray-700 px-2 py-1 text-xs transition hover:border-indigo-400 disabled:opacity-60"
-                      >
-                        Reset
-                      </button>
-                      <button
-                        onClick={() => void toggleUserStatus(item.id, !item.is_disabled)}
-                        disabled={busyUserId === item.id}
-                        className="rounded-md border border-gray-700 px-2 py-1 text-xs transition hover:border-indigo-400 disabled:opacity-60"
-                      >
-                        {item.is_disabled ? "Enable" : "Disable"}
-                      </button>
-                      <button
-                        onClick={() => void deleteUser(item.id)}
-                        disabled={busyUserId === item.id}
-                        className="rounded-md border border-red-800 px-2 py-1 text-xs text-red-300 transition hover:border-red-600 disabled:opacity-60"
-                      >
-                        Delete
-                      </button>
-                    </div>
+            </thead>
+            <tbody>
+              {loading ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                    Loading users...
                   </td>
                 </tr>
-              ))
+              ) : users.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                    No users found.
+                  </td>
+                </tr>
+              ) : (
+                users.map((item) => (
+                  <tr key={item.id} className={tableRowClassName}>
+                    <td className={tableCellClassName}>{item.full_name}</td>
+                    <td className={tableMutedCellClassName}>{item.email || "-"}</td>
+                    <td className={tableCellClassName}>
+                      <select
+                        value={item.role}
+                        onChange={(event) => void updateUserRole(item.id, event.target.value as Role)}
+                        disabled={busyUserId === item.id}
+                        className="rounded-xl border border-slate-800 bg-slate-950/85 px-3 py-2 text-xs capitalize text-slate-100"
+                      >
+                        <option value="admin">Admin</option>
+                        <option value="receptionist">Receptionist</option>
+                        <option value="technician">Technician</option>
+                      </select>
+                    </td>
+                    <td className={tableCellClassName}>
+                      <StatusBadge tone={item.is_disabled ? "danger" : "good"}>
+                        {item.is_disabled ? "Disabled" : "Active"}
+                      </StatusBadge>
+                    </td>
+                    <td className={tableMutedCellClassName}>{formatDate(item.created_at)}</td>
+                    <td className={tableCellClassName}>
+                      <div className="flex flex-wrap gap-2">
+                        <button type="button" onClick={() => void sendResetLink(item.id)} disabled={busyUserId === item.id} className={compactButtonClassName}>
+                          Reset
+                        </button>
+                        <button type="button" onClick={() => void toggleUserStatus(item.id, !item.is_disabled)} disabled={busyUserId === item.id} className={compactButtonClassName}>
+                          {item.is_disabled ? "Enable" : "Disable"}
+                        </button>
+                        <button type="button" onClick={() => void deleteUser(item.id)} disabled={busyUserId === item.id} className={compactDangerButtonClassName}>
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
             )}
           </tbody>
-        </table>
-      </section>
+          </table>
+          {!loading && totalUsers > 0 ? (
+            <PaginationControls
+              page={page}
+              pageSize={pageSize}
+              total={totalUsers}
+              onPageChange={setPage}
+              onPageSizeChange={(nextPageSize) => {
+                setPageSize(nextPageSize);
+                setPage(1);
+              }}
+            />
+          ) : null}
+        </section>
       </div>
     </div>
   );

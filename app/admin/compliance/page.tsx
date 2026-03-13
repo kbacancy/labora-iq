@@ -1,10 +1,20 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/src/lib/supabase";
 import { formatDate } from "@/src/lib/format";
 import type { AuditLog, CompliancePolicy, Profile } from "@/src/types/database";
-import { useAuth } from "@/src/context/AuthContext";
+import { auditExportFiltersSchema, compliancePolicySchema } from "@/src/lib/validation";
+import { PageHeader } from "@/src/components/ui/PageHeader";
+import {
+  SurfaceSection,
+  compactButtonClassName,
+  errorTextClassName,
+  fieldLabelClassName,
+  inputClassName,
+  primaryButtonClassName,
+  successTextClassName,
+} from "@/src/components/ui/surface";
 
 const toCsvValue = (value: string | number | null | undefined) => {
   const raw = value == null ? "" : String(value);
@@ -29,7 +39,6 @@ const downloadCsv = (filename: string, headers: string[], rows: Array<Array<stri
 };
 
 export default function CompliancePage() {
-  const { user } = useAuth();
   const [policy, setPolicy] = useState<CompliancePolicy | null>(null);
   const [loadingPolicy, setLoadingPolicy] = useState(true);
   const [savingPolicy, setSavingPolicy] = useState(false);
@@ -48,22 +57,39 @@ export default function CompliancePage() {
     access_review_frequency_days: 30,
   });
 
-  const loadPolicy = async () => {
+  const getAccessToken = useCallback(async () => {
+    const { data: sessionData } = await supabase.auth.getSession();
+    return sessionData.session?.access_token ?? null;
+  }, []);
+
+  const loadPolicy = useCallback(async () => {
     setLoadingPolicy(true);
     setError(null);
-    const { data, error: queryError } = await supabase
-      .from("compliance_policies")
-      .select("*")
-      .eq("singleton", true)
-      .maybeSingle();
 
-    if (queryError) {
-      setError(queryError.message);
+    const token = await getAccessToken();
+    if (!token) {
+      setError("No active session token.");
       setLoadingPolicy(false);
       return;
     }
 
-    const row = (data as CompliancePolicy | null) ?? null;
+    const response = await fetch("/api/admin/compliance", {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      data?: CompliancePolicy | null;
+    };
+
+    if (!response.ok) {
+      setError(payload.error ?? "Failed to load compliance policy.");
+      setLoadingPolicy(false);
+      return;
+    }
+
+    const row = payload.data ?? null;
     setPolicy(row);
     setDraft({
       audit_log_retention_days: row?.audit_log_retention_days ?? 365,
@@ -71,43 +97,68 @@ export default function CompliancePage() {
       access_review_frequency_days: row?.access_review_frequency_days ?? 30,
     });
     setLoadingPolicy(false);
-  };
+  }, [getAccessToken]);
 
   useEffect(() => {
-    void loadPolicy();
-  }, []);
+    const timer = setTimeout(() => {
+      void loadPolicy();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [loadPolicy]);
 
   const savePolicy = async () => {
+    const parsed = compliancePolicySchema.safeParse(draft);
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Invalid compliance policy.");
+      return;
+    }
+
     setSavingPolicy(true);
     setError(null);
     setMessage(null);
 
-    const payload = {
-      singleton: true,
-      audit_log_retention_days: Number(draft.audit_log_retention_days),
-      report_retention_days: Number(draft.report_retention_days),
-      access_review_frequency_days: Number(draft.access_review_frequency_days),
-      updated_by: user?.id ?? null,
-      updated_at: new Date().toISOString(),
-    };
-
-    const query = policy?.id
-      ? supabase.from("compliance_policies").update(payload).eq("id", policy.id)
-      : supabase.from("compliance_policies").insert(payload);
-
-    const { error: saveError } = await query;
-    setSavingPolicy(false);
-
-    if (saveError) {
-      setError(saveError.message);
+    const token = await getAccessToken();
+    if (!token) {
+      setSavingPolicy(false);
+      setError("No active session token.");
       return;
     }
 
-    setMessage("Compliance retention policy updated.");
+    const response = await fetch("/api/admin/compliance", {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify(parsed.data),
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      error?: string;
+      message?: string;
+    };
+    setSavingPolicy(false);
+
+    if (!response.ok) {
+      setError(payload.error ?? "Unable to update compliance policy.");
+      return;
+    }
+
+    setMessage(payload.message ?? "Compliance retention policy updated.");
     await loadPolicy();
   };
 
   const exportAuditCsv = async () => {
+    const parsed = auditExportFiltersSchema.safeParse({
+      auditFrom,
+      auditTo,
+      auditAction,
+      auditTable,
+    });
+    if (!parsed.success) {
+      setError(parsed.error.issues[0]?.message ?? "Invalid audit export filters.");
+      return;
+    }
+
     setExportingAudit(true);
     setError(null);
     setMessage(null);
@@ -118,17 +169,17 @@ export default function CompliancePage() {
       .order("timestamp", { ascending: false })
       .limit(5000);
 
-    if (auditFrom) {
-      query = query.gte("timestamp", new Date(auditFrom).toISOString());
+    if (parsed.data.auditFrom) {
+      query = query.gte("timestamp", new Date(parsed.data.auditFrom).toISOString());
     }
-    if (auditTo) {
-      query = query.lte("timestamp", new Date(auditTo).toISOString());
+    if (parsed.data.auditTo) {
+      query = query.lte("timestamp", new Date(parsed.data.auditTo).toISOString());
     }
-    if (auditAction.trim()) {
-      query = query.ilike("action", `%${auditAction.trim()}%`);
+    if (parsed.data.auditAction) {
+      query = query.ilike("action", `%${parsed.data.auditAction}%`);
     }
-    if (auditTable.trim()) {
-      query = query.ilike("table_name", `%${auditTable.trim()}%`);
+    if (parsed.data.auditTable) {
+      query = query.ilike("table_name", `%${parsed.data.auditTable}%`);
     }
 
     const { data, error: queryError } = await query;
@@ -199,128 +250,110 @@ export default function CompliancePage() {
 
   return (
     <div className="space-y-5">
-      <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-        <h2 className="text-lg font-medium">Retention Policies</h2>
-        <p className="mb-4 text-sm text-gray-400">Set data retention targets used by compliance operations.</p>
+      <PageHeader title="Compliance" description="Manage retention policy, audit export, and access review reporting from the governance surface." eyebrow="Governance controls" />
+
+      <SurfaceSection eyebrow="Retention policy" title="Retention targets" description="Set the target windows that drive compliance operations and review cadence.">
         {loadingPolicy ? (
-          <p className="text-sm text-gray-400">Loading policy...</p>
+          <p className="text-sm text-slate-400">Loading policy...</p>
         ) : (
           <div className="grid gap-3 md:grid-cols-3">
-            <label className="text-sm text-gray-300">
-              Audit Log Retention (days)
+            <label>
+              <span className={fieldLabelClassName}>Audit log retention (days)</span>
               <input
                 type="number"
                 value={draft.audit_log_retention_days}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, audit_log_retention_days: Number(event.target.value || 0) }))
                 }
-                className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+                className={inputClassName}
               />
             </label>
-            <label className="text-sm text-gray-300">
-              Report Retention (days)
+            <label>
+              <span className={fieldLabelClassName}>Report retention (days)</span>
               <input
                 type="number"
                 value={draft.report_retention_days}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, report_retention_days: Number(event.target.value || 0) }))
                 }
-                className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+                className={inputClassName}
               />
             </label>
-            <label className="text-sm text-gray-300">
-              Access Review Frequency (days)
+            <label>
+              <span className={fieldLabelClassName}>Access review frequency (days)</span>
               <input
                 type="number"
                 value={draft.access_review_frequency_days}
                 onChange={(event) =>
                   setDraft((current) => ({ ...current, access_review_frequency_days: Number(event.target.value || 0) }))
                 }
-                className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+                className={inputClassName}
               />
             </label>
           </div>
         )}
 
         <div className="mt-4 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={() => void savePolicy()}
-            disabled={savingPolicy || loadingPolicy}
-            className="rounded-lg border border-indigo-700 px-4 py-2 text-sm text-indigo-300 transition hover:border-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <button type="button" onClick={() => void savePolicy()} disabled={savingPolicy || loadingPolicy} className={primaryButtonClassName}>
             {savingPolicy ? "Saving..." : "Save Policy"}
           </button>
-          {policy?.updated_at ? <p className="text-xs text-gray-500">Last updated: {formatDate(policy.updated_at)}</p> : null}
+          {policy?.updated_at ? <p className="text-xs text-slate-500">Last updated: {formatDate(policy.updated_at)}</p> : null}
         </div>
-      </section>
+      </SurfaceSection>
 
-      <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-        <h2 className="text-lg font-medium">Audit Export</h2>
-        <p className="mb-4 text-sm text-gray-400">Export up to 5,000 audit rows as CSV with optional filters.</p>
+      <SurfaceSection eyebrow="Audit export" title="Export governed activity" description="Download up to 5,000 audit rows with focused filters for review or evidence packages.">
         <div className="grid gap-3 md:grid-cols-4">
-          <label className="text-sm text-gray-300">
-            From
+          <label>
+            <span className={fieldLabelClassName}>From</span>
             <input
               type="datetime-local"
               value={auditFrom}
               onChange={(event) => setAuditFrom(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+              className={inputClassName}
             />
           </label>
-          <label className="text-sm text-gray-300">
-            To
+          <label>
+            <span className={fieldLabelClassName}>To</span>
             <input
               type="datetime-local"
               value={auditTo}
               onChange={(event) => setAuditTo(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+              className={inputClassName}
             />
           </label>
-          <label className="text-sm text-gray-300">
-            Action contains
+          <label>
+            <span className={fieldLabelClassName}>Action contains</span>
             <input
               value={auditAction}
               onChange={(event) => setAuditAction(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+              className={inputClassName}
             />
           </label>
-          <label className="text-sm text-gray-300">
-            Table contains
+          <label>
+            <span className={fieldLabelClassName}>Table contains</span>
             <input
               value={auditTable}
               onChange={(event) => setAuditTable(event.target.value)}
-              className="mt-1 w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+              className={inputClassName}
             />
           </label>
         </div>
-        <button
-          type="button"
-          onClick={() => void exportAuditCsv()}
-          disabled={exportingAudit}
-          className="mt-4 rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-200 transition hover:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
+        <button type="button" onClick={() => void exportAuditCsv()} disabled={exportingAudit} className={`mt-4 ${compactButtonClassName}`}>
           {exportingAudit ? "Exporting..." : "Export Audit CSV"}
         </button>
-      </section>
+      </SurfaceSection>
 
-      <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-        <h2 className="text-lg font-medium">Access Review Report</h2>
-        <p className="mb-4 text-sm text-gray-400">
+      <SurfaceSection eyebrow="Access review" title="Export access review report" description="Generate a role-access review with last-seen activity to support periodic governance checks.">
+        <p className="mb-4 text-sm text-slate-400">
           Export user-role access review with last observed activity from audit logs.
         </p>
-        <button
-          type="button"
-          onClick={() => void exportAccessReviewCsv()}
-          disabled={exportingAccess}
-          className="rounded-lg border border-gray-700 px-4 py-2 text-sm text-gray-200 transition hover:border-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
+        <button type="button" onClick={() => void exportAccessReviewCsv()} disabled={exportingAccess} className={compactButtonClassName}>
           {exportingAccess ? "Building..." : "Export Access Review CSV"}
         </button>
-      </section>
+      </SurfaceSection>
 
-      {error ? <p className="text-sm text-red-400">{error}</p> : null}
-      {message ? <p className="text-sm text-emerald-300">{message}</p> : null}
+      {error ? <p className={errorTextClassName}>{error}</p> : null}
+      {message ? <p className={successTextClassName}>{message}</p> : null}
     </div>
   );
 }

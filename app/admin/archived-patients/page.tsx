@@ -1,91 +1,124 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { supabase } from "@/src/lib/supabase";
 import { formatDate } from "@/src/lib/format";
+import { PageHeader } from "@/src/components/ui/PageHeader";
+import { PaginationControls } from "@/src/components/ui/PaginationControls";
+import {
+  tableCellClassName,
+  tableHeadClassName,
+  tableHeaderCellClassName,
+  tableMutedCellClassName,
+  tableRowClassName,
+  tableWrapperClassName,
+} from "@/src/components/ui/surface";
 import type { Patient } from "@/src/types/database";
 
 export default function ArchivedPatientsPage() {
+  const DEFAULT_PAGE_SIZE = 10;
   const [patients, setPatients] = useState<Patient[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [totalPatients, setTotalPatients] = useState(0);
 
-  const loadArchivedPatients = async () => {
+  const loadArchivedPatients = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
 
-    const { data, error: queryError } = await supabase
+    const { data, error: queryError, count } = await supabase
       .from("patients")
-      .select("*")
+      .select("*", { count: "exact" })
       .eq("is_archived", true)
-      .order("archived_at", { ascending: false });
+      .order("archived_at", { ascending: false })
+      .range(from, to);
 
     if (queryError) {
       setError(queryError.message);
       setPatients([]);
+      setTotalPatients(0);
       setLoading(false);
       return;
     }
 
     setPatients(data ?? []);
+    setTotalPatients(count ?? 0);
     setLoading(false);
-  };
+  }, [page, pageSize]);
 
   useEffect(() => {
-    void loadArchivedPatients();
-  }, []);
+    const timer = setTimeout(() => {
+      void loadArchivedPatients();
+    }, 0);
+
+    return () => clearTimeout(timer);
+  }, [loadArchivedPatients]);
 
   return (
-    <section className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
-      <div className="border-b border-gray-800 px-4 py-3">
-        <h2 className="text-lg font-medium">Archived Patients</h2>
-        <p className="text-sm text-gray-400">Patients marked as archived from operational views.</p>
-      </div>
-
-      <table className="min-w-full text-sm">
-        <thead className="border-b border-gray-800 text-left text-gray-400">
-          <tr>
-            <th className="px-4 py-3 font-medium">Name</th>
-            <th className="px-4 py-3 font-medium">Age</th>
-            <th className="px-4 py-3 font-medium">Gender</th>
-            <th className="px-4 py-3 font-medium">Phone</th>
-            <th className="px-4 py-3 font-medium">Archived At</th>
-            <th className="px-4 py-3 font-medium">Archived By</th>
-          </tr>
-        </thead>
-        <tbody>
-          {loading ? (
+    <div>
+      <PageHeader title="Archived Patients" description="Review patient records removed from active workflow surfaces." eyebrow="Governance archive" />
+      <section className={tableWrapperClassName}>
+        <table className="min-w-full text-sm">
+          <thead className={tableHeadClassName}>
             <tr>
-              <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
-                Loading archived patients...
-              </td>
+              <th className={tableHeaderCellClassName}>Name</th>
+              <th className={tableHeaderCellClassName}>Age</th>
+              <th className={tableHeaderCellClassName}>Gender</th>
+              <th className={tableHeaderCellClassName}>Phone</th>
+              <th className={tableHeaderCellClassName}>Archived At</th>
+              <th className={tableHeaderCellClassName}>Archived By</th>
             </tr>
-          ) : error ? (
-            <tr>
-              <td colSpan={6} className="px-4 py-6 text-center text-red-400">
-                {error}
-              </td>
-            </tr>
-          ) : patients.length === 0 ? (
-            <tr>
-              <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
-                No archived patients.
-              </td>
-            </tr>
-          ) : (
-            patients.map((patient) => (
-              <tr key={patient.id} className="border-t border-gray-800 text-gray-200">
-                <td className="px-4 py-3">{patient.name}</td>
-                <td className="px-4 py-3">{patient.age}</td>
-                <td className="px-4 py-3">{patient.gender}</td>
-                <td className="px-4 py-3">{patient.phone}</td>
-                <td className="px-4 py-3 text-gray-400">{patient.archived_at ? formatDate(patient.archived_at) : "-"}</td>
-                <td className="px-4 py-3 text-gray-400">{patient.archived_by ?? "-"}</td>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                  Loading archived patients...
+                </td>
               </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </section>
+            ) : error ? (
+              <tr>
+                <td colSpan={6} className="px-5 py-8 text-center text-red-300">
+                  {error}
+                </td>
+              </tr>
+            ) : patients.length === 0 ? (
+              <tr>
+                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                  No archived patients.
+                </td>
+              </tr>
+            ) : (
+              patients.map((patient) => (
+                <tr key={patient.id} className={tableRowClassName}>
+                  <td className={tableCellClassName}>{patient.name}</td>
+                  <td className={tableCellClassName}>{patient.age}</td>
+                  <td className={tableCellClassName}>{patient.gender}</td>
+                  <td className={tableCellClassName}>{patient.phone}</td>
+                  <td className={tableMutedCellClassName}>{patient.archived_at ? formatDate(patient.archived_at) : "-"}</td>
+                  <td className={tableMutedCellClassName}>{patient.archived_by ?? "-"}</td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+        {!loading && !error && totalPatients > 0 ? (
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={totalPatients}
+            onPageChange={setPage}
+            onPageSizeChange={(nextPageSize) => {
+              setPageSize(nextPageSize);
+              setPage(1);
+            }}
+          />
+        ) : null}
+      </section>
+    </div>
   );
 }

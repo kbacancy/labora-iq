@@ -1,23 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { assertAdminFromRequest } from "@/src/lib/admin-auth";
 import { supabaseServerAdmin } from "@/src/lib/supabase-server";
-
-const createUserSchema = z.discriminatedUnion("provisioning", [
-  z.object({
-    provisioning: z.literal("invite"),
-    email: z.email(),
-    full_name: z.string().min(2),
-    role: z.enum(["admin", "receptionist", "technician"]),
-  }),
-  z.object({
-    provisioning: z.literal("password"),
-    email: z.email(),
-    password: z.string().min(8),
-    full_name: z.string().min(2),
-    role: z.enum(["admin", "receptionist", "technician"]),
-  }),
-]);
+import { createUserSchema, parseJsonBody } from "@/src/lib/validation";
 
 export async function GET(request: NextRequest) {
   const authResult = await assertAdminFromRequest(request);
@@ -25,11 +9,19 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: authResult.message }, { status: authResult.status });
   }
 
-  const { data: profiles, error: profilesError } = await supabaseServerAdmin
+  const pageParam = Number(request.nextUrl.searchParams.get("page") ?? "1");
+  const pageSizeParam = Number(request.nextUrl.searchParams.get("pageSize") ?? "10");
+  const page = Number.isFinite(pageParam) && pageParam > 0 ? Math.floor(pageParam) : 1;
+  const pageSize = Number.isFinite(pageSizeParam) && pageSizeParam > 0 ? Math.min(Math.floor(pageSizeParam), 100) : 10;
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
+
+  const { data: profiles, error: profilesError, count } = await supabaseServerAdmin
     .from("profiles")
-    .select("id,full_name,role,created_at")
+    .select("id,full_name,role,created_at", { count: "exact" })
     .eq("org_id", authResult.orgId)
-    .order("created_at", { ascending: false });
+    .order("created_at", { ascending: false })
+    .range(from, to);
 
   if (profilesError) {
     return NextResponse.json({ error: profilesError.message }, { status: 500 });
@@ -63,7 +55,7 @@ export async function GET(request: NextRequest) {
     };
   });
 
-  return NextResponse.json({ data });
+  return NextResponse.json({ data, page, pageSize, total: count ?? 0 });
 }
 
 export async function POST(request: NextRequest) {
@@ -72,7 +64,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: authResult.message }, { status: authResult.status });
   }
 
-  const body = await request.json();
+  const body = await parseJsonBody(request);
   const parsed = createUserSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid payload." }, { status: 400 });
@@ -110,12 +102,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: profileError.message }, { status: 500 });
   }
 
-  const { error: memberError } = await supabaseServerAdmin.from("organization_members").insert({
-    org_id: authResult.orgId,
-    user_id: createdUser.user.id,
-    role,
-    full_name,
-  });
+  const { error: memberError } = await supabaseServerAdmin.from("organization_members").upsert(
+    {
+      org_id: authResult.orgId,
+      user_id: createdUser.user.id,
+      role,
+      full_name,
+    },
+    { onConflict: "org_id,user_id" }
+  );
 
   if (memberError) {
     await supabaseServerAdmin.from("profiles").delete().eq("id", createdUser.user.id);

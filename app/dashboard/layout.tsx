@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/src/context/AuthContext";
+import { NotificationsProvider } from "@/src/context/NotificationsContext";
 import { hasRouteAccess } from "@/src/lib/rbac";
 import { DashboardShell } from "@/src/components/layout/DashboardShell";
 
@@ -52,5 +53,9 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     );
   }
 
-  return <DashboardShell>{children}</DashboardShell>;
+  return (
+    <NotificationsProvider>
+      <DashboardShell>{children}</DashboardShell>
+    </NotificationsProvider>
+  );
 }

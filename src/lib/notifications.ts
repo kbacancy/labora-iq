@@ -9,35 +9,43 @@ interface CreateNotificationInput {
   message: string;
   entityType?: string | null;
   entityId?: string | null;
+  actionUrl?: string | null;
   createdBy?: string | null;
 }
 
-export const createNotification = async ({
-  recipientUserId,
-  recipientRole,
-  type,
-  title,
-  message,
-  entityType,
-  entityId,
-  createdBy,
-}: CreateNotificationInput) => {
+export const createNotification = async (input: CreateNotificationInput) => {
+  const { recipientUserId, recipientRole, type, title, message, entityType, entityId, actionUrl } = input;
   if (!recipientUserId && !recipientRole) {
     return;
   }
 
-  const { error } = await supabase.from("notifications").insert({
-    recipient_user_id: recipientUserId ?? null,
-    recipient_role: recipientRole ?? null,
-    type,
-    title,
-    message,
-    entity_type: entityType ?? null,
-    entity_id: entityId ?? null,
-    created_by: createdBy ?? null,
+  const { data: sessionData } = await supabase.auth.getSession();
+  const token = sessionData.session?.access_token;
+  if (!token) {
+    console.error("Notification insert failed:", "Missing access token.");
+    return;
+  }
+
+  const response = await fetch("/api/notifications", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      recipientUserId,
+      recipientRole,
+      type,
+      title,
+      message,
+      entityType,
+      entityId,
+      actionUrl,
+    }),
   });
 
-  if (error) {
-    console.error("Notification insert failed:", error.message);
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => ({}))) as { error?: string };
+    console.error("Notification insert failed:", payload.error ?? "Request failed.");
   }
 };

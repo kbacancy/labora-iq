@@ -32,43 +32,74 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
       return;
     }
 
-    const { data, error } = await supabase.from("profiles").select("*").eq("id", id).single();
-    if (error) {
-      setProfile(null);
-      return;
-    }
+    try {
+      const { data, error } = await supabase.from("profiles").select("*").eq("id", id).single();
+      if (error) {
+        console.error("Failed to refresh profile:", error.message);
+        setProfile(null);
+        return;
+      }
 
-    setProfile(data);
+      setProfile(data);
+    } catch (error) {
+      console.error("Unexpected profile refresh error:", error);
+      setProfile(null);
+    }
   }, [user?.id]);
 
   useEffect(() => {
     let mounted = true;
 
-    const loadSession = async () => {
-      const { data } = await supabase.auth.getSession();
+    const applySession = async (nextSession: Session | null) => {
       if (!mounted) {
         return;
       }
-      const nextSession = data.session;
+
       setSession(nextSession);
       setUser(nextSession?.user ?? null);
-      if (nextSession?.user) {
-        await refreshProfile(nextSession.user.id);
+
+      try {
+        if (nextSession?.user) {
+          await refreshProfile(nextSession.user.id);
+        } else {
+          setProfile(null);
+        }
+      } catch (error) {
+        console.error("Unexpected auth bootstrap error:", error);
+        setProfile(null);
+      } finally {
+        if (mounted) {
+          setLoading(false);
+        }
       }
-      setLoading(false);
     };
 
-    loadSession();
-
-    const { data: subscription } = supabase.auth.onAuthStateChange(async (_, nextSession) => {
-      setSession(nextSession);
-      setUser(nextSession?.user ?? null);
-      if (nextSession?.user) {
-        await refreshProfile(nextSession.user.id);
-      } else {
-        setProfile(null);
+    const loadSession = async () => {
+      setLoading(true);
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          console.error("Failed to load session:", error.message);
+          await applySession(null);
+          return;
+        }
+        await applySession(data.session);
+      } catch (error) {
+        console.error("Unexpected session load error:", error);
+        if (mounted) {
+          setSession(null);
+          setUser(null);
+          setProfile(null);
+          setLoading(false);
+        }
       }
-      setLoading(false);
+    };
+
+    void loadSession();
+
+    const { data: subscription } = supabase.auth.onAuthStateChange((_, nextSession) => {
+      setLoading(true);
+      void applySession(nextSession);
     });
 
     return () => {
@@ -78,7 +109,11 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
   }, [refreshProfile]);
 
   const signIn = async (email: string, password: string) => {
+    setLoading(true);
     const { error } = await supabase.auth.signInWithPassword({ email, password });
+    if (error) {
+      setLoading(false);
+    }
     return { error: error?.message ?? null };
   };
 
@@ -111,15 +146,15 @@ export const AuthProvider = ({ children }: { children: React.ReactNode }) => {
     () => {
       const normalizedRole = normalizeRole((profile as { role?: string } | null)?.role ?? null);
       return {
-      user,
-      session,
-      profile,
-      role: normalizedRole,
-      loading,
-      signIn,
-      signOut,
-      refreshProfile,
-    };
+        user,
+        session,
+        profile,
+        role: normalizedRole,
+        loading,
+        signIn,
+        signOut,
+        refreshProfile,
+      };
     },
     [loading, profile, session, user, refreshProfile]
   );

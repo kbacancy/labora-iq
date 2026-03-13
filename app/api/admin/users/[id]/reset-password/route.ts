@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { assertAdminFromRequest } from "@/src/lib/admin-auth";
 import { supabaseServerAdmin, supabaseServerAnon } from "@/src/lib/supabase-server";
+import { userIdParamSchema } from "@/src/lib/validation";
 
 export async function POST(
   request: NextRequest,
@@ -12,21 +13,22 @@ export async function POST(
   }
 
   const { id } = await params;
-  if (!id) {
-    return NextResponse.json({ error: "User id is required." }, { status: 400 });
+  const validatedId = userIdParamSchema.safeParse(id);
+  if (!validatedId.success) {
+    return NextResponse.json({ error: validatedId.error.issues[0]?.message ?? "User id is required." }, { status: 400 });
   }
 
   const { data: targetProfile, error: targetProfileError } = await supabaseServerAdmin
     .from("profiles")
     .select("id,org_id")
-    .eq("id", id)
+    .eq("id", validatedId.data)
     .single();
 
   if (targetProfileError || !targetProfile || targetProfile.org_id !== authResult.orgId) {
     return NextResponse.json({ error: "User not found in your organization." }, { status: 404 });
   }
 
-  const { data: userData, error: userError } = await supabaseServerAdmin.auth.admin.getUserById(id);
+  const { data: userData, error: userError } = await supabaseServerAdmin.auth.admin.getUserById(validatedId.data);
   if (userError || !userData.user?.email) {
     return NextResponse.json({ error: userError?.message ?? "User email not found." }, { status: 404 });
   }

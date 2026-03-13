@@ -1,22 +1,25 @@
 import Link from "next/link";
+import { primaryButtonClassName } from "@/src/components/ui/surface";
 
 interface PageHeaderProps {
   title: string;
   description: string;
+  eyebrow?: string;
   actionHref?: string;
   actionLabel?: string;
 }
 
-export const PageHeader = ({ title, description, actionHref, actionLabel }: PageHeaderProps) => (
-  <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+export const PageHeader = ({ title, description, eyebrow = "Operational surface", actionHref, actionLabel }: PageHeaderProps) => (
+  <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
     <div>
-      <h1 className="text-4xl font-semibold tracking-tight text-slate-50">{title}</h1>
-      <p className="mt-1 text-sm text-slate-400">{description}</p>
+      <p className="text-[10px] uppercase tracking-[0.28em] text-blue-300">{eyebrow}</p>
+      <h1 className="mt-2 text-4xl font-semibold tracking-[-0.04em] text-slate-50 md:text-5xl">{title}</h1>
+      <p className="mt-3 max-w-2xl text-sm leading-7 text-slate-400">{description}</p>
     </div>
     {actionHref && actionLabel ? (
       <Link
         href={actionHref}
-        className="rounded-lg border border-slate-600 bg-slate-800 px-4 py-2 text-sm font-medium text-slate-100 transition hover:bg-slate-700"
+        className={primaryButtonClassName}
       >
         {actionLabel}
       </Link>

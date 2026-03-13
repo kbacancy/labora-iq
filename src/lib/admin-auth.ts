@@ -10,6 +10,19 @@ export const getBearerToken = (request: NextRequest) => {
 };
 
 export const assertAdminFromRequest = async (request: NextRequest) => {
+  const authResult = await assertAuthenticatedFromRequest(request);
+  if (!authResult.ok) {
+    return authResult;
+  }
+
+  if (authResult.role !== "admin") {
+    return { ok: false as const, status: 403, message: "Admin access required." };
+  }
+
+  return { ok: true as const, userId: authResult.userId, orgId: authResult.orgId };
+};
+
+export const assertAuthenticatedFromRequest = async (request: NextRequest) => {
   const token = getBearerToken(request);
   if (!token) {
     return { ok: false as const, status: 401, message: "Missing access token." };
@@ -26,9 +39,14 @@ export const assertAdminFromRequest = async (request: NextRequest) => {
     .eq("id", userData.user.id)
     .single();
 
-  if (profileError || profile?.role !== "admin" || !profile?.org_id) {
-    return { ok: false as const, status: 403, message: "Admin access required." };
+  if (profileError || !profile?.role || !profile?.org_id) {
+    return { ok: false as const, status: 403, message: "Authenticated profile required." };
   }
 
-  return { ok: true as const, userId: userData.user.id, orgId: profile.org_id };
+  return {
+    ok: true as const,
+    userId: userData.user.id,
+    orgId: profile.org_id,
+    role: profile.role,
+  };
 };

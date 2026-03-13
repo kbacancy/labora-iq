@@ -1,15 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { PageHeader } from "@/src/components/ui/PageHeader";
+import { PaginationControls } from "@/src/components/ui/PaginationControls";
+import { SearchableSelect } from "@/src/components/ui/SearchableSelect";
 import { RoleGate } from "@/src/components/auth/RoleGate";
 import { useAuth } from "@/src/context/AuthContext";
+import { fetchWithAccessToken } from "@/src/lib/auth-fetch";
 import { supabase } from "@/src/lib/supabase";
-import { createAuditLog } from "@/src/lib/audit";
-import { generateSampleCode } from "@/src/lib/samples";
-import { createNotification } from "@/src/lib/notifications";
 import { formatDate } from "@/src/lib/format";
+import {
+  SurfaceSection,
+  errorTextClassName,
+  fieldLabelClassName,
+  inputClassName,
+  primaryButtonClassName,
+  tableCellClassName,
+  tableHeadClassName,
+  tableHeaderCellClassName,
+  tableMutedCellClassName,
+  tableRowClassName,
+  tableWrapperClassName,
+} from "@/src/components/ui/surface";
 import type { Sample } from "@/src/types/database";
 
 interface SampleView extends Sample {
@@ -19,41 +32,62 @@ interface SampleView extends Sample {
 const sampleStatuses: Sample["status"][] = ["collected", "received", "in_testing", "completed", "reported"];
 
 export default function SamplesPage() {
+  const DEFAULT_PAGE_SIZE = 10;
   const { role, user } = useAuth();
   const [samples, setSamples] = useState<SampleView[]>([]);
-  const [patients, setPatients] = useState<Array<{ id: string; name: string }>>([]);
+  const [patients, setPatients] = useState<Array<{ id: string; name: string; phone: string }>>([]);
   const [technicians, setTechnicians] = useState<Array<{ id: string; full_name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [totalSamples, setTotalSamples] = useState(0);
   const [form, setForm] = useState({
     patient_id: "",
     test_type: "",
     technician_id: "",
   });
+  const patientOptions = patients.map((patient) => ({
+    value: patient.id,
+    label: patient.name,
+    description: patient.phone,
+    keywords: [patient.phone],
+  }));
+  const technicianOptions = technicians.map((technician) => ({
+    value: technician.id,
+    label: technician.full_name,
+  }));
 
-  const loadDependencies = async () => {
+  const loadDependencies = useCallback(async () => {
     const [{ data: patientRows }, { data: technicianRows }] = await Promise.all([
-      supabase.from("patients").select("id,name").order("name", { ascending: true }),
+      supabase.from("patients").select("id,name,phone").order("name", { ascending: true }),
       supabase.from("profiles").select("id,full_name").eq("role", "technician").order("full_name", { ascending: true }),
     ]);
     setPatients(patientRows ?? []);
     setTechnicians(technicianRows ?? []);
-  };
+  }, []);
 
-  const loadSamples = async () => {
+  const loadSamples = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
 
-    let query = supabase.from("samples").select("*").order("created_at", { ascending: false });
+    let query = supabase
+      .from("samples")
+      .select("*", { count: "exact" })
+      .order("created_at", { ascending: false })
+      .range(from, to);
     if (role === "technician") {
       query = query.or(`technician_id.eq.${user?.id ?? ""},technician_id.is.null`);
     }
 
-    const { data, error: queryError } = await query;
+    const { data, error: queryError, count } = await query;
     if (queryError) {
       setError(queryError.message);
       setSamples([]);
+      setTotalSamples(0);
       setLoading(false);
       return;
     }
@@ -65,19 +99,20 @@ export default function SamplesPage() {
     })) as SampleView[];
 
     setSamples(mapped);
+    setTotalSamples(count ?? 0);
     setLoading(false);
-  };
+  }, [page, pageSize, role, technicians, user?.id]);
 
   useEffect(() => {
-    const run = async () => {
-      await loadDependencies();
-    };
-    void run();
-  }, []);
+    void loadDependencies();
+  }, [loadDependencies]);
 
   useEffect(() => {
-    void loadSamples();
-  }, [role, user?.id, technicians.length]);
+    const timer = setTimeout(() => {
+      void loadSamples();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [loadSamples]);
 
   const createSample = async () => {
     if (!form.patient_id || !form.test_type.trim()) {
@@ -88,231 +123,160 @@ export default function SamplesPage() {
     setCreating(true);
     setError(null);
 
-    const selectedPatient = patients.find((item) => item.id === form.patient_id);
-    if (!selectedPatient) {
+    if (!patients.some((item) => item.id === form.patient_id)) {
       setCreating(false);
       setError("Invalid patient selected.");
       return;
     }
 
-    let insertedId: string | null = null;
-    let attempts = 0;
-
-    while (!insertedId && attempts < 5) {
-      attempts += 1;
-      const sampleCode = generateSampleCode();
-      const { data: inserted, error: insertError } = await supabase
-        .from("samples")
-        .insert({
-          sample_code: sampleCode,
+    try {
+      const response = await fetchWithAccessToken("/api/workflow/samples", {
+        method: "POST",
+        body: JSON.stringify({
           patient_id: form.patient_id,
-          patient_name: selectedPatient.name,
           test_type: form.test_type.trim(),
-          technician_id: form.technician_id || null,
-          status: "collected",
-          created_by: user?.id ?? null,
-        })
-        .select("id")
-        .single();
+          technician_id: form.technician_id || "",
+        }),
+      });
 
-      if (!insertError && inserted?.id) {
-        insertedId = inserted.id;
-        break;
-      }
-
-      if (insertError && !insertError.message.includes("duplicate key")) {
-        setCreating(false);
-        setError(insertError.message);
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setError(payload.error ?? "Unable to create sample.");
         return;
       }
+
+      setForm({ patient_id: "", test_type: "", technician_id: "" });
+      if (page !== 1) {
+        setPage(1);
+      } else {
+        await loadSamples();
+      }
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to create sample.");
+    } finally {
+      setCreating(false);
     }
-
-    setCreating(false);
-
-    if (!insertedId) {
-      setError("Failed to generate unique sample code. Please retry.");
-      return;
-    }
-
-    await createAuditLog({
-      userId: user?.id ?? null,
-      action: "sample_created",
-      tableName: "samples",
-      recordId: insertedId,
-    });
-
-    if (form.technician_id) {
-      await createNotification({
-        recipientUserId: form.technician_id,
-        type: "sample_assigned",
-        title: "New Sample Assigned",
-        message: `Sample ${insertedId.slice(0, 8)} has been assigned to you for ${form.test_type.trim()}.`,
-        entityType: "samples",
-        entityId: insertedId,
-        createdBy: user?.id ?? null,
-      });
-    }
-
-    await createNotification({
-      recipientRole: "admin",
-      type: "sample_created",
-      title: "Sample Created",
-      message: `A new sample has been created for patient ${selectedPatient.name}.`,
-      entityType: "samples",
-      entityId: insertedId,
-      createdBy: user?.id ?? null,
-    });
-
-    setForm({ patient_id: "", test_type: "", technician_id: "" });
-    await loadSamples();
   };
 
   const updateSample = async (sampleId: string, updates: Partial<Pick<Sample, "status" | "technician_id">>) => {
     setError(null);
-    const { error: updateError } = await supabase.from("samples").update(updates).eq("id", sampleId);
-    if (updateError) {
-      setError(updateError.message);
-      return;
-    }
-
-    await createAuditLog({
-      userId: user?.id ?? null,
-      action: updates.status ? "sample_status_updated" : "sample_technician_updated",
-      tableName: "samples",
-      recordId: sampleId,
-    });
-
-    if (updates.status) {
-      await createNotification({
-        recipientRole: "admin",
-        type: "sample_status",
-        title: "Sample Status Updated",
-        message: `Sample ${sampleId.slice(0, 8)} moved to ${updates.status}.`,
-        entityType: "samples",
-        entityId: sampleId,
-        createdBy: user?.id ?? null,
+    try {
+      const response = await fetchWithAccessToken(`/api/workflow/samples/${sampleId}`, {
+        method: "PATCH",
+        body: JSON.stringify(
+          updates.status
+            ? { action: "set_status", status: updates.status }
+            : { action: "set_technician", technician_id: updates.technician_id || "" }
+        ),
       });
-      await createNotification({
-        recipientRole: "receptionist",
-        type: "sample_status",
-        title: "Sample Status Updated",
-        message: `Sample ${sampleId.slice(0, 8)} moved to ${updates.status}.`,
-        entityType: "samples",
-        entityId: sampleId,
-        createdBy: user?.id ?? null,
-      });
-    }
 
-    if (updates.technician_id) {
-      await createNotification({
-        recipientUserId: updates.technician_id,
-        type: "sample_assigned",
-        title: "Sample Assigned",
-        message: `You were assigned sample ${sampleId.slice(0, 8)}.`,
-        entityType: "samples",
-        entityId: sampleId,
-        createdBy: user?.id ?? null,
-      });
-    }
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setError(payload.error ?? "Unable to update sample.");
+        return;
+      }
 
-    await loadSamples();
+      await loadSamples();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to update sample.");
+    }
   };
 
   return (
     <RoleGate allowedRoles={["admin", "receptionist", "technician"]}>
-      <PageHeader title="Samples" description="Track sample lifecycle, assignment, and testing progress." />
+      <PageHeader title="Samples" description="Track collection, technician routing, and lifecycle status across the active sample queue." />
 
       {(role === "admin" || role === "receptionist") ? (
-        <section className="mb-5 rounded-xl border border-gray-800 bg-gray-900 p-5">
-          <h2 className="text-lg font-medium">Create Sample</h2>
-          <div className="mt-3 grid gap-3 md:grid-cols-3">
-            <select
-              value={form.patient_id}
-              onChange={(event) => setForm((current) => ({ ...current, patient_id: event.target.value }))}
-              className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-            >
-              <option value="">Select patient</option>
-              {patients.map((patient) => (
-                <option key={patient.id} value={patient.id}>
-                  {patient.name}
-                </option>
-              ))}
-            </select>
-            <input
-              value={form.test_type}
-              onChange={(event) => setForm((current) => ({ ...current, test_type: event.target.value }))}
-              placeholder="Test type (e.g. CBC, LFT)"
-              className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-            />
-            <select
-              value={form.technician_id}
-              onChange={(event) => setForm((current) => ({ ...current, technician_id: event.target.value }))}
-              className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-            >
-              <option value="">Assign technician (optional)</option>
-              {technicians.map((item) => (
-                <option key={item.id} value={item.id}>
-                  {item.full_name}
-                </option>
-              ))}
-            </select>
+        <SurfaceSection
+          eyebrow="Specimen intake"
+          title="Create sample"
+          description="Register a fresh sample, attach it to the patient record, and optionally assign execution ownership."
+          className="mb-5"
+        >
+          <div className="grid gap-4 md:grid-cols-3">
+            <label>
+              <SearchableSelect
+                label="Patient"
+                value={form.patient_id}
+                onChange={(nextValue) => setForm((current) => ({ ...current, patient_id: nextValue }))}
+                options={patientOptions}
+                placeholder="Select patient"
+                searchPlaceholder="Search patient"
+                emptyMessage="No matching patients."
+              />
+            </label>
+            <label>
+              <span className={fieldLabelClassName}>Test type</span>
+              <input
+                value={form.test_type}
+                onChange={(event) => setForm((current) => ({ ...current, test_type: event.target.value }))}
+                placeholder="Test type (e.g. CBC, LFT)"
+                className={inputClassName}
+              />
+            </label>
+            <label>
+              <SearchableSelect
+                label="Assign technician"
+                value={form.technician_id}
+                onChange={(nextValue) => setForm((current) => ({ ...current, technician_id: nextValue }))}
+                options={technicianOptions}
+                placeholder="Assign technician (optional)"
+                searchPlaceholder="Search technician"
+                emptyMessage="No technicians found."
+              />
+            </label>
           </div>
-          <button
-            type="button"
-            onClick={() => void createSample()}
-            disabled={creating}
-            className="mt-4 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          <button type="button" onClick={() => void createSample()} disabled={creating} className={`mt-5 ${primaryButtonClassName}`}>
             {creating ? "Creating..." : "Create Sample"}
           </button>
-        </section>
+        </SurfaceSection>
       ) : null}
 
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
+      {error ? <p className={`mb-3 ${errorTextClassName}`}>{error}</p> : null}
 
-      <div className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+      <div className={tableWrapperClassName}>
         <table className="min-w-full text-sm">
-          <thead className="border-b border-gray-800 text-left text-gray-400">
+          <thead className={tableHeadClassName}>
             <tr>
-              <th className="px-4 py-3 font-medium">Sample Code</th>
-              <th className="px-4 py-3 font-medium">Patient</th>
-              <th className="px-4 py-3 font-medium">Test Type</th>
-              <th className="px-4 py-3 font-medium">Technician</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Created</th>
+              <th className={tableHeaderCellClassName}>Sample Code</th>
+              <th className={tableHeaderCellClassName}>Patient</th>
+              <th className={tableHeaderCellClassName}>Test Type</th>
+              <th className={tableHeaderCellClassName}>Technician</th>
+              <th className={tableHeaderCellClassName}>Status</th>
+              <th className={tableHeaderCellClassName}>Created</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
                   Loading samples...
                 </td>
               </tr>
             ) : samples.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
                   No samples found.
                 </td>
               </tr>
             ) : (
               samples.map((sample) => (
-                <tr key={sample.id} className="border-t border-gray-800 text-gray-200">
-                  <td className="px-4 py-3">
-                    <Link href={`/dashboard/samples/${sample.id}`} className="text-indigo-300 hover:text-indigo-200">
+                <tr key={sample.id} className={tableRowClassName}>
+                  <td className={tableCellClassName}>
+                    <Link href={`/dashboard/samples/${sample.id}`} className="text-blue-300 hover:text-blue-200">
                       {sample.sample_code}
                     </Link>
                   </td>
-                  <td className="px-4 py-3">{sample.patient_name}</td>
-                  <td className="px-4 py-3">{sample.test_type}</td>
-                  <td className="px-4 py-3">
+                  <td className={tableCellClassName}>{sample.patient_name}</td>
+                  <td className={tableCellClassName}>{sample.test_type}</td>
+                  <td className={tableCellClassName}>
                     {(role === "admin" || role === "receptionist") ? (
                       <select
                         value={sample.technician_id ?? ""}
                         onChange={(event) =>
                           void updateSample(sample.id, { technician_id: event.target.value || null })
                         }
-                        className="rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-xs"
+                        className="rounded-xl border border-slate-800 bg-slate-950/85 px-3 py-2 text-xs text-slate-100"
                       >
                         <option value="">Unassigned</option>
                         {technicians.map((item) => (
@@ -325,14 +289,14 @@ export default function SamplesPage() {
                       <span>{sample.technician_name ?? "-"}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className={tableCellClassName}>
                     {(role === "admin" || role === "technician") ? (
                       <select
                         value={sample.status}
                         onChange={(event) =>
                           void updateSample(sample.id, { status: event.target.value as Sample["status"] })
                         }
-                        className="rounded-md border border-gray-700 bg-gray-950 px-2 py-1 text-xs capitalize"
+                        className="rounded-xl border border-slate-800 bg-slate-950/85 px-3 py-2 text-xs capitalize text-slate-100"
                       >
                         {sampleStatuses.map((status) => (
                           <option key={status} value={status}>
@@ -344,12 +308,24 @@ export default function SamplesPage() {
                       <span className="capitalize">{sample.status}</span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-400">{formatDate(sample.created_at)}</td>
+                  <td className={tableMutedCellClassName}>{formatDate(sample.created_at)}</td>
                 </tr>
               ))
             )}
           </tbody>
         </table>
+        {!loading && !error && totalSamples > 0 ? (
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={totalSamples}
+            onPageChange={setPage}
+            onPageSizeChange={(nextPageSize) => {
+              setPageSize(nextPageSize);
+              setPage(1);
+            }}
+          />
+        ) : null}
       </div>
     </RoleGate>
   );

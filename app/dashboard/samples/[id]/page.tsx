@@ -1,28 +1,39 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { PageHeader } from "@/src/components/ui/PageHeader";
+import { SearchableSelect } from "@/src/components/ui/SearchableSelect";
 import { RoleGate } from "@/src/components/auth/RoleGate";
 import { useAuth } from "@/src/context/AuthContext";
+import { fetchWithAccessToken } from "@/src/lib/auth-fetch";
 import { supabase } from "@/src/lib/supabase";
-import { createAuditLog } from "@/src/lib/audit";
-import { createNotification } from "@/src/lib/notifications";
 import { formatDate } from "@/src/lib/format";
+import {
+  SurfaceSection,
+  StatusBadge,
+  errorTextClassName,
+  fieldLabelClassName,
+  selectClassName,
+} from "@/src/components/ui/surface";
 import type { Sample } from "@/src/types/database";
 
 const statuses: Sample["status"][] = ["collected", "received", "in_testing", "completed", "reported"];
 
 export default function SampleDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const { role, user } = useAuth();
+  const { role } = useAuth();
   const [sample, setSample] = useState<Sample | null>(null);
   const [technicians, setTechnicians] = useState<Array<{ id: string; full_name: string }>>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const technicianOptions = technicians.map((technician) => ({
+    value: technician.id,
+    label: technician.full_name,
+  }));
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     if (!id) {
       return;
     }
@@ -45,11 +56,14 @@ export default function SampleDetailPage() {
     setSample(sampleRow as Sample);
     setTechnicians(techRows ?? []);
     setLoading(false);
-  };
+  }, [id]);
 
   useEffect(() => {
-    void loadData();
-  }, [id]);
+    const timer = setTimeout(() => {
+      void loadData();
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [loadData]);
 
   const updateSample = async (updates: Partial<Pick<Sample, "status" | "technician_id">>) => {
     if (!sample) {
@@ -58,87 +72,59 @@ export default function SampleDetailPage() {
 
     setSaving(true);
     setError(null);
-    const { error: updateError } = await supabase.from("samples").update(updates).eq("id", sample.id);
-    setSaving(false);
-
-    if (updateError) {
-      setError(updateError.message);
-      return;
-    }
-
-    await createAuditLog({
-      userId: user?.id ?? null,
-      action: updates.status ? "sample_status_updated" : "sample_technician_updated",
-      tableName: "samples",
-      recordId: sample.id,
-    });
-
-    if (updates.status) {
-      await createNotification({
-        recipientRole: "admin",
-        type: "sample_status",
-        title: "Sample Status Updated",
-        message: `Sample ${sample.sample_code} moved to ${updates.status}.`,
-        entityType: "samples",
-        entityId: sample.id,
-        createdBy: user?.id ?? null,
+    try {
+      const response = await fetchWithAccessToken(`/api/workflow/samples/${sample.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(
+          updates.status
+            ? { action: "set_status", status: updates.status }
+            : { action: "set_technician", technician_id: updates.technician_id || "" }
+        ),
       });
-      await createNotification({
-        recipientRole: "receptionist",
-        type: "sample_status",
-        title: "Sample Status Updated",
-        message: `Sample ${sample.sample_code} moved to ${updates.status}.`,
-        entityType: "samples",
-        entityId: sample.id,
-        createdBy: user?.id ?? null,
-      });
-    }
 
-    if (updates.technician_id) {
-      await createNotification({
-        recipientUserId: updates.technician_id,
-        type: "sample_assigned",
-        title: "Sample Assigned",
-        message: `You were assigned sample ${sample.sample_code}.`,
-        entityType: "samples",
-        entityId: sample.id,
-        createdBy: user?.id ?? null,
-      });
-    }
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      if (!response.ok) {
+        setError(payload.error ?? "Unable to update sample.");
+        return;
+      }
 
-    await loadData();
+      await loadData();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to update sample.");
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
     <RoleGate allowedRoles={["admin", "receptionist", "technician"]}>
-      <PageHeader title="Sample Detail" description="View and manage lifecycle for a single sample." />
+      <PageHeader title="Sample Detail" description="Inspect a single specimen, monitor its progress, and adjust routing or lifecycle state." />
 
-      {loading ? <p className="text-sm text-gray-400">Loading sample...</p> : null}
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
+      {loading ? <p className="text-sm text-slate-400">Loading sample...</p> : null}
+      {error ? <p className={`mb-3 ${errorTextClassName}`}>{error}</p> : null}
 
       {sample ? (
         <div className="grid gap-4 md:grid-cols-2">
-          <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-            <h2 className="text-lg font-medium">Overview</h2>
-            <div className="mt-3 space-y-2 text-sm text-gray-300">
-              <p>Sample Code: <span className="text-gray-100">{sample.sample_code}</span></p>
-              <p>Patient: <span className="text-gray-100">{sample.patient_name}</span></p>
-              <p>Test Type: <span className="text-gray-100">{sample.test_type}</span></p>
-              <p>Created: <span className="text-gray-100">{formatDate(sample.created_at)}</span></p>
+          <SurfaceSection eyebrow="Sample overview" title="Lifecycle snapshot" description="Keep the specimen identity and current processing context visible while making updates.">
+            <div className="space-y-3 text-sm text-slate-300">
+              <p>Sample Code: <span className="text-slate-100">{sample.sample_code}</span></p>
+              <p>Patient: <span className="text-slate-100">{sample.patient_name}</span></p>
+              <p>Test Type: <span className="text-slate-100">{sample.test_type}</span></p>
+              <p>Created: <span className="text-slate-100">{formatDate(sample.created_at)}</span></p>
+              <StatusBadge tone="info" className="mt-2">{sample.status}</StatusBadge>
             </div>
-          </section>
+          </SurfaceSection>
 
-          <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-            <h2 className="text-lg font-medium">Actions</h2>
-            <div className="mt-3 space-y-3">
+          <SurfaceSection eyebrow="Execution controls" title="Actions" description="Change sample lifecycle stage or technician ownership with governed actions.">
+            <div className="space-y-4">
               {(role === "admin" || role === "technician") ? (
-                <div>
-                  <label className="mb-1 block text-sm text-gray-300">Status</label>
+                <label>
+                  <span className={fieldLabelClassName}>Status</span>
                   <select
                     value={sample.status}
                     onChange={(event) => void updateSample({ status: event.target.value as Sample["status"] })}
                     disabled={saving}
-                    className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm capitalize"
+                    className={`${selectClassName} capitalize`}
                   >
                     {statuses.map((status) => (
                       <option key={status} value={status}>
@@ -146,29 +132,23 @@ export default function SampleDetailPage() {
                       </option>
                     ))}
                   </select>
-                </div>
+                </label>
               ) : null}
 
               {(role === "admin" || role === "receptionist") ? (
-                <div>
-                  <label className="mb-1 block text-sm text-gray-300">Assigned Technician</label>
-                  <select
-                    value={sample.technician_id ?? ""}
-                    onChange={(event) => void updateSample({ technician_id: event.target.value || null })}
-                    disabled={saving}
-                    className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-                  >
-                    <option value="">Unassigned</option>
-                    {technicians.map((item) => (
-                      <option key={item.id} value={item.id}>
-                        {item.full_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+                <SearchableSelect
+                  label="Assigned Technician"
+                  value={sample.technician_id ?? ""}
+                  onChange={(nextValue) => void updateSample({ technician_id: nextValue || null })}
+                  disabled={saving}
+                  options={technicianOptions}
+                  placeholder="Unassigned"
+                  searchPlaceholder="Search technician"
+                  emptyMessage="No technicians found."
+                />
               ) : null}
             </div>
-          </section>
+          </SurfaceSection>
         </div>
       ) : null}
     </RoleGate>

@@ -1,18 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { assertAdminFromRequest } from "@/src/lib/admin-auth";
 import { supabaseServerAdmin } from "@/src/lib/supabase-server";
-
-const patchSchema = z.discriminatedUnion("action", [
-  z.object({
-    action: z.literal("update_role"),
-    role: z.enum(["admin", "receptionist", "technician"]),
-  }),
-  z.object({
-    action: z.literal("set_disabled"),
-    disabled: z.boolean(),
-  }),
-]);
+import { parseJsonBody, patchUserSchema, userIdParamSchema } from "@/src/lib/validation";
 
 export async function PATCH(
   request: NextRequest,
@@ -24,22 +13,23 @@ export async function PATCH(
   }
 
   const { id } = await params;
-  if (!id) {
-    return NextResponse.json({ error: "User id is required." }, { status: 400 });
+  const validatedId = userIdParamSchema.safeParse(id);
+  if (!validatedId.success) {
+    return NextResponse.json({ error: validatedId.error.issues[0]?.message ?? "User id is required." }, { status: 400 });
   }
 
   const { data: targetProfile, error: targetProfileError } = await supabaseServerAdmin
     .from("profiles")
     .select("id,org_id")
-    .eq("id", id)
+    .eq("id", validatedId.data)
     .single();
 
   if (targetProfileError || !targetProfile || targetProfile.org_id !== authResult.orgId) {
     return NextResponse.json({ error: "User not found in your organization." }, { status: 404 });
   }
 
-  const body = await request.json();
-  const parsed = patchSchema.safeParse(body);
+  const body = await parseJsonBody(request);
+  const parsed = patchUserSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid payload." }, { status: 400 });
   }
@@ -48,7 +38,7 @@ export async function PATCH(
     const { error } = await supabaseServerAdmin
       .from("profiles")
       .update({ role: parsed.data.role })
-      .eq("id", id)
+      .eq("id", validatedId.data)
       .eq("org_id", authResult.orgId);
     if (error) {
       return NextResponse.json({ error: error.message }, { status: 500 });
@@ -57,7 +47,7 @@ export async function PATCH(
     const { error: memberError } = await supabaseServerAdmin
       .from("organization_members")
       .update({ role: parsed.data.role })
-      .eq("user_id", id)
+      .eq("user_id", validatedId.data)
       .eq("org_id", authResult.orgId);
 
     if (memberError) {
@@ -67,7 +57,7 @@ export async function PATCH(
     return NextResponse.json({ message: "Role updated." });
   }
 
-  const { error } = await supabaseServerAdmin.auth.admin.updateUserById(id, {
+  const { error } = await supabaseServerAdmin.auth.admin.updateUserById(validatedId.data, {
     ban_duration: parsed.data.disabled ? "876000h" : "none",
   });
 
@@ -88,25 +78,26 @@ export async function DELETE(
   }
 
   const { id } = await params;
-  if (!id) {
-    return NextResponse.json({ error: "User id is required." }, { status: 400 });
+  const validatedId = userIdParamSchema.safeParse(id);
+  if (!validatedId.success) {
+    return NextResponse.json({ error: validatedId.error.issues[0]?.message ?? "User id is required." }, { status: 400 });
   }
 
-  if (authResult.userId === id) {
+  if (authResult.userId === validatedId.data) {
     return NextResponse.json({ error: "You cannot delete your own admin account." }, { status: 400 });
   }
 
   const { data: targetProfile, error: targetProfileError } = await supabaseServerAdmin
     .from("profiles")
     .select("id,org_id")
-    .eq("id", id)
+    .eq("id", validatedId.data)
     .single();
 
   if (targetProfileError || !targetProfile || targetProfile.org_id !== authResult.orgId) {
     return NextResponse.json({ error: "User not found in your organization." }, { status: 404 });
   }
 
-  const { error } = await supabaseServerAdmin.auth.admin.deleteUser(id, true);
+  const { error } = await supabaseServerAdmin.auth.admin.deleteUser(validatedId.data, true);
   if (error) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

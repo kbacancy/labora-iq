@@ -1,13 +1,24 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/src/components/ui/PageHeader";
+import { PaginationControls } from "@/src/components/ui/PaginationControls";
 import { useAuth } from "@/src/context/AuthContext";
 import { supabase } from "@/src/lib/supabase";
 import { formatCurrency, formatDate } from "@/src/lib/format";
 import { DownloadReportButton } from "@/src/components/orders/DownloadReportButton";
+import {
+  StatusBadge,
+  compactAccentButtonClassName,
+  tableCellClassName,
+  tableHeadClassName,
+  tableHeaderCellClassName,
+  tableMutedCellClassName,
+  tableRowClassName,
+  tableWrapperClassName,
+} from "@/src/components/ui/surface";
 import type { LabOrder, Patient } from "@/src/types/database";
 
 interface OrderView extends LabOrder {
@@ -15,54 +26,71 @@ interface OrderView extends LabOrder {
 }
 
 export default function OrdersPage() {
+  const DEFAULT_PAGE_SIZE = 10;
   const { role, user } = useAuth();
   const searchParams = useSearchParams();
   const refreshFlag = searchParams.get("refresh");
   const [orders, setOrders] = useState<OrderView[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [totalOrders, setTotalOrders] = useState(0);
 
-  const loadOrders = async () => {
+  const loadOrders = useCallback(async () => {
     if (!role) {
       return;
     }
     setLoading(true);
     setError(null);
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
 
     const isAssignedColumnMissing = (message?: string) =>
       Boolean(message?.includes("assigned_to") && message?.includes("does not exist"));
 
     let orderRows: LabOrder[] | null = null;
     let orderError: { message: string } | null = null;
+    let totalCount = 0;
 
     if (role === "technician") {
-      const assignedQuery = await supabase
+      const assignedQuery = supabase
         .from("lab_orders")
-        .select("*")
+        .select("*", { count: "exact" })
         .or(`assigned_to.eq.${user?.id ?? ""},status.eq.pending`)
         .order("created_at", { ascending: false });
+      const rangedAssignedQuery = await assignedQuery.range(from, to);
 
-      if (assignedQuery.error && isAssignedColumnMissing(assignedQuery.error.message)) {
+      if (rangedAssignedQuery.error && isAssignedColumnMissing(rangedAssignedQuery.error.message)) {
         const fallbackQuery = await supabase
           .from("lab_orders")
-          .select("*")
+          .select("*", { count: "exact" })
           .eq("status", "pending")
-          .order("created_at", { ascending: false });
+          .order("created_at", { ascending: false })
+          .range(from, to);
         orderRows = fallbackQuery.data;
         orderError = fallbackQuery.error;
+        totalCount = fallbackQuery.count ?? 0;
       } else {
-        orderRows = assignedQuery.data;
-        orderError = assignedQuery.error;
+        orderRows = rangedAssignedQuery.data;
+        orderError = rangedAssignedQuery.error;
+        totalCount = rangedAssignedQuery.count ?? 0;
       }
     } else {
-      const query = await supabase.from("lab_orders").select("*").order("created_at", { ascending: false });
+      const query = await supabase
+        .from("lab_orders")
+        .select("*", { count: "exact" })
+        .order("created_at", { ascending: false })
+        .range(from, to);
       orderRows = query.data;
       orderError = query.error;
+      totalCount = query.count ?? 0;
     }
 
     if (orderError) {
       setError(orderError.message);
       setOrders([]);
+      setTotalOrders(0);
       setLoading(false);
       return;
     }
@@ -81,15 +109,16 @@ export default function OrdersPage() {
     }));
 
     setOrders(mapped);
+    setTotalOrders(totalCount);
     setLoading(false);
-  };
+  }, [page, pageSize, role, user?.id]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
       void loadOrders();
     }, 0);
     return () => clearTimeout(timer);
-  }, [role, user?.id, refreshFlag]);
+  }, [loadOrders, refreshFlag]);
 
   const canCreateOrder = role === "admin" || role === "receptionist";
   const canEnterResults = role === "admin" || role === "technician";
@@ -98,42 +127,42 @@ export default function OrdersPage() {
     <div>
       <PageHeader
         title="Lab Orders"
-        description="Track order lifecycle and download completed reports."
+        description="Track order lifecycle, route technicians, and release approved reports from a single operational ledger."
         actionHref={canCreateOrder ? "/dashboard/orders/new" : undefined}
         actionLabel={canCreateOrder ? "Create Order" : undefined}
       />
 
-      <div className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+      <div className={tableWrapperClassName}>
         <table className="min-w-full text-sm">
-          <thead className="border-b border-gray-800 text-left text-gray-400">
+          <thead className={tableHeadClassName}>
             <tr>
-              <th className="px-4 py-3 font-medium">Patient</th>
-              <th className="px-4 py-3 font-medium">Total</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Approval</th>
-              <th className="px-4 py-3 font-medium">Date</th>
-              <th className="px-4 py-3 font-medium">Report</th>
+              <th className={tableHeaderCellClassName}>Patient</th>
+              <th className={tableHeaderCellClassName}>Total</th>
+              <th className={tableHeaderCellClassName}>Status</th>
+              <th className={tableHeaderCellClassName}>Approval</th>
+              <th className={tableHeaderCellClassName}>Date</th>
+              <th className={tableHeaderCellClassName}>Report</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
                   Loading orders...
                 </td>
               </tr>
             ) : error ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-red-400">
+                <td colSpan={6} className="px-5 py-8 text-center text-red-300">
                   {error}
                 </td>
               </tr>
             ) : orders.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
                   No orders found.{" "}
                   {canCreateOrder ? (
-                    <Link className="text-indigo-400" href="/dashboard/orders/new">
+                    <Link className="text-blue-300 hover:text-blue-200" href="/dashboard/orders/new">
                       Create one
                     </Link>
                   ) : null}
@@ -142,48 +171,48 @@ export default function OrdersPage() {
               </tr>
             ) : (
               orders.map((order) => (
-                <tr key={order.id} className="border-t border-gray-800 text-gray-200">
-                  <td className="px-4 py-3">{order.patientName}</td>
-                  <td className="px-4 py-3">{formatCurrency(Number(order.total_price ?? 0))}</td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-md px-2 py-1 text-xs uppercase ${
+                <tr key={order.id} className={tableRowClassName}>
+                  <td className={tableCellClassName}>{order.patientName}</td>
+                  <td className={tableCellClassName}>{formatCurrency(Number(order.total_price ?? 0))}</td>
+                  <td className={tableCellClassName}>
+                    <StatusBadge
+                      tone={
                         order.status === "completed"
-                          ? "bg-emerald-600/20 text-emerald-300"
+                          ? "good"
                           : order.status === "in_progress"
-                            ? "bg-blue-600/20 text-blue-300"
-                            : "bg-amber-600/20 text-amber-300"
-                      }`}
+                            ? "info"
+                            : "warn"
+                      }
                     >
                       {order.status}
-                    </span>
+                    </StatusBadge>
                   </td>
-                  <td className="px-4 py-3">
-                    <span
-                      className={`rounded-md px-2 py-1 text-xs uppercase ${
+                  <td className={tableCellClassName}>
+                    <StatusBadge
+                      tone={
                         order.approval_status === "approved"
-                          ? "bg-emerald-600/20 text-emerald-300"
+                          ? "good"
                           : order.approval_status === "reviewed"
-                            ? "bg-blue-600/20 text-blue-300"
-                            : "bg-gray-700/40 text-gray-300"
-                      }`}
+                            ? "info"
+                            : "neutral"
+                      }
                     >
                       {order.approval_status ?? "draft"}
-                    </span>
+                    </StatusBadge>
                   </td>
-                  <td className="px-4 py-3 text-gray-400">{formatDate(order.created_at)}</td>
-                  <td className="px-4 py-3">
+                  <td className={tableMutedCellClassName}>{formatDate(order.created_at)}</td>
+                  <td className={tableCellClassName}>
                     {order.status === "completed" && order.approval_status === "approved" ? (
                       <DownloadReportButton orderId={order.id} />
                     ) : canEnterResults ? (
                       <Link
                         href={`/dashboard/results?orderId=${order.id}`}
-                        className="rounded-md border border-indigo-700 px-2 py-1 text-xs text-indigo-300 transition hover:border-indigo-500"
+                        className={compactAccentButtonClassName}
                       >
                         Enter Results
                       </Link>
                     ) : (
-                      <span className="text-xs text-gray-500">Awaiting approval</span>
+                      <span className="text-xs text-slate-500">Awaiting approval</span>
                     )}
                   </td>
                 </tr>
@@ -191,6 +220,18 @@ export default function OrdersPage() {
             )}
           </tbody>
         </table>
+        {!loading && !error && totalOrders > 0 ? (
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={totalOrders}
+            onPageChange={setPage}
+            onPageSizeChange={(nextPageSize) => {
+              setPageSize(nextPageSize);
+              setPage(1);
+            }}
+          />
+        ) : null}
       </div>
     </div>
   );

@@ -2,20 +2,25 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
-import { z } from "zod";
+import { Controller, useForm } from "react-hook-form";
+import { Checkbox } from "@/src/components/ui/Checkbox";
 import { PageHeader } from "@/src/components/ui/PageHeader";
 import { RoleGate } from "@/src/components/auth/RoleGate";
+import { SearchableSelect } from "@/src/components/ui/SearchableSelect";
 import { useAuth } from "@/src/context/AuthContext";
 import { supabase } from "@/src/lib/supabase";
 import { formatCurrency } from "@/src/lib/format";
 import { createNotification } from "@/src/lib/notifications";
+import { createOrderSchema } from "@/src/lib/validation";
+import {
+  SurfaceSection,
+  StatusBadge,
+  errorTextClassName,
+  fieldLabelClassName,
+  inputClassName,
+  primaryButtonClassName,
+} from "@/src/components/ui/surface";
 import type { LabTest, Patient } from "@/src/types/database";
-
-const orderSchema = z.object({
-  patient_id: z.string().uuid("Please select a patient."),
-  test_ids: z.array(z.string().uuid()).min(1, "Select at least one test."),
-});
 
 type OrderValues = {
   patient_id: string;
@@ -29,26 +34,67 @@ export default function NewOrderPage() {
   const [patients, setPatients] = useState<Patient[]>([]);
   const [tests, setTests] = useState<LabTest[]>([]);
   const [technicians, setTechnicians] = useState<Array<{ id: string; full_name: string }>>([]);
+  const [loadingData, setLoadingData] = useState(true);
   const [selectedTests, setSelectedTests] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const { register, handleSubmit, watch } = useForm<OrderValues>();
+  const { control, register, handleSubmit } = useForm<OrderValues>();
 
-  const selectedPatientId = watch("patient_id");
-  const selectedTechnicianId = watch("assigned_to");
+  const patientOptions = useMemo(
+    () =>
+      patients.map((patient) => ({
+        value: patient.id,
+        label: patient.name,
+        description: patient.phone,
+        keywords: [patient.phone],
+      })),
+    [patients]
+  );
+  const technicianOptions = useMemo(
+    () =>
+      technicians.map((technician) => ({
+        value: technician.id,
+        label: technician.full_name,
+      })),
+    [technicians]
+  );
 
   useEffect(() => {
     const loadData = async () => {
-      const [{ data: patientRows }, { data: testRows }, { data: technicianRows }] = await Promise.all([
-        supabase.from("patients").select("*").order("name", { ascending: true }),
-        supabase.from("tests").select("*").order("test_name", { ascending: true }),
-        supabase.from("profiles").select("id,full_name").eq("role", "technician").order("full_name", { ascending: true }),
-      ]);
-      setPatients(patientRows ?? []);
-      setTests(testRows ?? []);
-      setTechnicians(technicianRows ?? []);
+      setLoadingData(true);
+      try {
+        const [
+          { data: patientRows, error: patientError },
+          { data: testRows, error: testError },
+          { data: technicianRows, error: technicianError },
+        ] = await Promise.all([
+          supabase.from("patients").select("*").order("name", { ascending: true }),
+          supabase.from("tests").select("*").order("test_name", { ascending: true }),
+          supabase.from("profiles").select("id,full_name").eq("role", "technician").order("full_name", { ascending: true }),
+        ]);
+
+        const firstError = patientError ?? testError ?? technicianError;
+        if (firstError) {
+          setError(firstError.message);
+          setPatients([]);
+          setTests([]);
+          setTechnicians([]);
+          return;
+        }
+
+        setPatients(patientRows ?? []);
+        setTests(testRows ?? []);
+        setTechnicians(technicianRows ?? []);
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Unable to load order setup data.");
+        setPatients([]);
+        setTests([]);
+        setTechnicians([]);
+      } finally {
+        setLoadingData(false);
+      }
     };
-    loadData();
+    void loadData();
   }, []);
 
   const totalPrice = useMemo(
@@ -64,7 +110,12 @@ export default function NewOrderPage() {
   };
 
   const onSubmit = handleSubmit(async (values) => {
-    const parsed = orderSchema.safeParse({ patient_id: values.patient_id, test_ids: selectedTests });
+    const parsed = createOrderSchema.safeParse({
+      patient_id: values.patient_id,
+      test_ids: selectedTests,
+      assigned_to: values.assigned_to,
+      referring_doctor_name: values.referring_doctor_name,
+    });
     if (!parsed.success) {
       setError(parsed.error.issues[0]?.message ?? "Invalid payload.");
       return;
@@ -81,8 +132,8 @@ export default function NewOrderPage() {
         status: "pending",
         approval_status: "draft",
         created_by: user?.id ?? null,
-        assigned_to: values.assigned_to || null,
-        referring_doctor_name: values.referring_doctor_name?.trim() || null,
+        assigned_to: parsed.data.assigned_to ?? null,
+        referring_doctor_name: parsed.data.referring_doctor_name ?? null,
       })
       .select("id")
       .single();
@@ -104,8 +155,8 @@ export default function NewOrderPage() {
             ...(isTotalPriceMissing ? {} : { total_price: totalPrice }),
             status: "pending",
             approval_status: "draft",
-            assigned_to: values.assigned_to || null,
-            referring_doctor_name: values.referring_doctor_name?.trim() || null,
+            assigned_to: parsed.data.assigned_to ?? null,
+            referring_doctor_name: parsed.data.referring_doctor_name ?? null,
           })
           .select("id")
           .single()
@@ -133,14 +184,18 @@ export default function NewOrderPage() {
       return;
     }
 
-    if (values.assigned_to) {
+    const selectedPatient = patients.find((patient) => patient.id === parsed.data.patient_id);
+    const orderSubject = selectedPatient?.name ? `for ${selectedPatient.name}` : "for a patient";
+
+    if (parsed.data.assigned_to) {
       await createNotification({
-        recipientUserId: values.assigned_to,
+        recipientUserId: parsed.data.assigned_to,
         type: "order_assigned",
         title: "New Order Assigned",
-        message: `Order ${orderRow.id.slice(0, 8)} has been assigned to you.`,
+        message: `A new order ${orderSubject} has been assigned to you.`,
         entityType: "lab_orders",
         entityId: orderRow.id,
+        actionUrl: `/dashboard/results?orderId=${orderRow.id}`,
         createdBy: user?.id ?? null,
       });
     }
@@ -149,9 +204,10 @@ export default function NewOrderPage() {
       recipientRole: "admin",
       type: "order_created",
       title: "Order Created",
-      message: `A new order ${orderRow.id.slice(0, 8)} has been created.`,
+      message: `A new order has been created ${orderSubject}.`,
       entityType: "lab_orders",
       entityId: orderRow.id,
+      actionUrl: "/dashboard/orders",
       createdBy: user?.id ?? null,
     });
 
@@ -160,80 +216,87 @@ export default function NewOrderPage() {
 
   return (
     <RoleGate allowedRoles={["admin", "receptionist"]}>
-      <PageHeader title="Create Order" description="Create lab order by selecting patient and tests." />
+      <PageHeader title="Create Order" description="Assemble the patient request, route execution ownership, and price the release package in one flow." />
+      {loadingData ? (
+        <div className="rounded-[1.75rem] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.82),rgba(15,23,42,0.66))] px-6 py-5 text-sm text-slate-400 shadow-[0_18px_50px_rgba(0,0,0,0.24)]">
+          Loading order setup data...
+        </div>
+      ) : null}
       <form onSubmit={onSubmit} className="grid gap-4 lg:grid-cols-2">
-        <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-          <label className="mb-1 block text-sm text-gray-300">Patient</label>
-          <select {...register("patient_id")} className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm">
-            <option value="">Select patient</option>
-            {patients.map((patient) => (
-              <option key={patient.id} value={patient.id}>
-                {patient.name} ({patient.phone})
-              </option>
-            ))}
-          </select>
-          {selectedPatientId ? (
-            <p className="mt-2 text-xs text-gray-400">Selected patient ID: {selectedPatientId}</p>
-          ) : null}
-          <label className="mb-1 mt-4 block text-sm text-gray-300">Assign Technician (optional)</label>
-          <select
-            {...register("assigned_to")}
-            className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-          >
-            <option value="">Unassigned (pending pool)</option>
-            {technicians.map((technician) => (
-              <option key={technician.id} value={technician.id}>
-                {technician.full_name}
-              </option>
-            ))}
-          </select>
-          {selectedTechnicianId ? (
-            <p className="mt-2 text-xs text-gray-400">Assigned technician ID: {selectedTechnicianId}</p>
-          ) : null}
-          <label className="mb-1 mt-4 block text-sm text-gray-300">Referring Doctor (optional)</label>
-          <input
-            {...register("referring_doctor_name")}
-            placeholder="Dr. Name"
-            className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
+        <SurfaceSection eyebrow="Order composition" title="Request details" description="Select the patient, technician routing, and referral context before releasing the order into the queue.">
+          <div className="space-y-4">
+            <Controller
+              control={control}
+              name="patient_id"
+              defaultValue=""
+              render={({ field }) => (
+                <SearchableSelect
+                  label="Patient"
+                  value={field.value ?? ""}
+                  onChange={field.onChange}
+                  options={patientOptions}
+                  placeholder="Select patient"
+                  searchPlaceholder="Search patient by name or phone"
+                emptyMessage="No matching patients."
+              />
+            )}
           />
-        </section>
+            <Controller
+              control={control}
+              name="assigned_to"
+              defaultValue=""
+              render={({ field }) => (
+                <SearchableSelect
+                  label="Assign technician"
+                  value={field.value ?? ""}
+                  onChange={field.onChange}
+                  options={technicianOptions}
+                  placeholder="Select technician (optional)"
+                  searchPlaceholder="Search technician"
+                emptyMessage="No technicians found."
+              />
+            )}
+          />
+            <label>
+              <span className={fieldLabelClassName}>Referring doctor</span>
+              <input {...register("referring_doctor_name")} placeholder="Dr. Name" className={inputClassName} />
+            </label>
+          </div>
+        </SurfaceSection>
 
-        <section className="rounded-xl border border-gray-800 bg-gray-900 p-5">
-          <p className="mb-3 text-sm text-gray-300">Tests</p>
+        <SurfaceSection eyebrow="Diagnostic bundle" title="Select tests" description="Choose the test set that defines the execution scope and total release value.">
           {tests.length === 0 ? (
-            <p className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-3 text-sm text-amber-300">
-              No tests available in catalog. Ask admin to add tests from <span className="font-medium">Tests</span>.
+            <p className="rounded-2xl border border-amber-900/40 bg-amber-950/10 px-4 py-4 text-sm text-amber-300">
+              No tests available in catalog. Ask an admin to load the starter catalog or add tests from <span className="font-medium">Tests</span>.
             </p>
           ) : (
-            <div className="max-h-72 space-y-2 overflow-auto pr-1">
+            <div className="scrollbar-panel max-h-72 space-y-2 overflow-auto pr-1">
               {tests.map((test) => (
-                <label key={test.id} className="flex cursor-pointer items-center justify-between rounded-lg border border-gray-800 px-3 py-2 hover:border-gray-700">
-                  <span className="text-sm text-gray-200">{test.test_name}</span>
+                <label key={test.id} className="flex cursor-pointer items-center justify-between rounded-2xl border border-slate-800 bg-slate-950/70 px-4 py-3 transition hover:border-slate-700">
+                  <span className="text-sm text-slate-200">{test.test_name}</span>
                   <span className="flex items-center gap-3">
-                    <span className="text-xs text-gray-400">{formatCurrency(Number(test.price))}</span>
-                    <input
-                      type="checkbox"
+                    <span className="text-xs text-slate-400">{formatCurrency(Number(test.price))}</span>
+                    <Checkbox
                       checked={selectedTests.includes(test.id)}
                       onChange={() => toggleTest(test.id)}
-                      className="h-4 w-4 accent-indigo-500"
+                      ariaLabel={`Select ${test.test_name}`}
                     />
                   </span>
                 </label>
               ))}
             </div>
           )}
-          <p className="mt-4 text-sm text-gray-300">
-            Total Price: <span className="font-semibold text-indigo-300">{formatCurrency(totalPrice)}</span>
-          </p>
-        </section>
+          <div className="mt-4 flex items-center gap-3">
+            <StatusBadge tone="info">Selected {selectedTests.length}</StatusBadge>
+            <p className="text-sm text-slate-300">
+              Total Price: <span className="font-semibold text-blue-300">{formatCurrency(totalPrice)}</span>
+            </p>
+          </div>
+        </SurfaceSection>
 
         <section className="lg:col-span-2">
-          {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
-          <button
-            type="submit"
-            disabled={submitting}
-            className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
-          >
+          {error ? <p className={`mb-3 ${errorTextClassName}`}>{error}</p> : null}
+          <button type="submit" disabled={submitting} className={primaryButtonClassName}>
             {submitting ? "Creating..." : "Create Order"}
           </button>
         </section>

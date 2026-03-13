@@ -1,15 +1,27 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import { useRouter, useSearchParams } from "next/navigation";
 import { z } from "zod";
 import { PageHeader } from "@/src/components/ui/PageHeader";
+import { SearchableSelect } from "@/src/components/ui/SearchableSelect";
 import { RoleGate } from "@/src/components/auth/RoleGate";
 import { useAuth } from "@/src/context/AuthContext";
+import { fetchWithAccessToken } from "@/src/lib/auth-fetch";
 import { supabase } from "@/src/lib/supabase";
-import { createAuditLog } from "@/src/lib/audit";
-import { createNotification } from "@/src/lib/notifications";
+import {
+  StatusBadge,
+  SurfaceSection,
+  compactAccentButtonClassName,
+  compactButtonClassName,
+  errorTextClassName,
+  fieldLabelClassName,
+  helperTextClassName,
+  inputClassName,
+  primaryButtonClassName,
+  successTextClassName,
+} from "@/src/components/ui/surface";
 
 interface PendingOrder {
   id: string;
@@ -50,7 +62,7 @@ const resultFieldSchema = z.object({
 });
 
 export default function ResultsPage() {
-  const { user, role, profile } = useAuth();
+  const { user, role } = useAuth();
   const router = useRouter();
   const searchParams = useSearchParams();
   const orderIdFromQuery = searchParams.get("orderId");
@@ -62,13 +74,23 @@ export default function ResultsPage() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const { register, handleSubmit, reset, watch } = useForm<ResultFormValues>();
+  const orderOptions = useMemo(
+    () =>
+      orders.map((order) => ({
+        value: order.id,
+        label: order.patient.name,
+        description: `${order.status.replace("_", " ")}${order.referring_doctor_name ? ` • Dr ${order.referring_doctor_name}` : ""}`,
+        keywords: [order.id.slice(0, 8), order.patient.name, order.referring_doctor_name ?? ""],
+      })),
+    [orders]
+  );
 
   const selectedOrder = useMemo(
     () => orders.find((order) => order.id === selectedOrderId),
     [orders, selectedOrderId]
   );
 
-  const loadPendingOrders = async () => {
+  const loadPendingOrders = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -138,11 +160,11 @@ export default function ResultsPage() {
       setSelectedOrderId("");
     }
     setLoading(false);
-  };
+  }, [orderIdFromQuery, role, user?.id]);
 
   useEffect(() => {
-    loadPendingOrders();
-  }, [role, user?.id, orderIdFromQuery]);
+    void loadPendingOrders();
+  }, [loadPendingOrders]);
 
   useEffect(() => {
     if (!selectedOrder) {
@@ -162,14 +184,19 @@ export default function ResultsPage() {
         return;
       }
 
-      const { error: markError } = await supabase
-        .from("lab_orders")
-        .update({ status: "in_progress" })
-        .eq("id", selectedOrder.id)
-        .eq("status", "pending");
+      try {
+        const response = await fetchWithAccessToken(`/api/workflow/orders/${selectedOrder.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ action: "mark_in_progress" }),
+        });
 
-      if (markError) {
-        setError(markError.message);
+        const payload = (await response.json().catch(() => ({}))) as { error?: string };
+        if (!response.ok) {
+          setError(payload.error ?? "Unable to start order.");
+          return;
+        }
+      } catch (error) {
+        setError(error instanceof Error ? error.message : "Unable to start order.");
         return;
       }
 
@@ -211,64 +238,33 @@ export default function ResultsPage() {
 
     setSaving(true);
 
-    const payload = rows.map((row) => ({
-      order_id: selectedOrder.id,
-      test_id: row.test_id,
-      result_value: row.result_value,
-      remarks: row.remarks || null,
-      entered_by: user?.id ?? null,
-    }));
+    try {
+      const response = await fetchWithAccessToken(`/api/workflow/orders/${selectedOrder.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action: "submit_results",
+          rows: rows.map((row) => ({
+            test_id: row.test_id,
+            result_value: row.result_value,
+            remarks: row.remarks || "",
+          })),
+        }),
+      });
 
-    const { error: insertError } = await supabase
-      .from("results")
-      .upsert(payload, { onConflict: "order_id,test_id" });
-    if (insertError) {
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!response.ok) {
+        setError(payload.error ?? "Unable to save results.");
+        return;
+      }
+
+      setSuccess(payload.message ?? "Results saved and order marked as completed.");
+      await loadPendingOrders();
+      router.replace("/dashboard/orders?refresh=1");
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to save results.");
+    } finally {
       setSaving(false);
-      setError(insertError.message);
-      return;
     }
-
-    const { error: updateError } = await supabase
-      .from("lab_orders")
-      .update({
-        status: "completed",
-        approval_status: "draft",
-        reviewed_by: null,
-        reviewed_by_name: null,
-        reviewed_at: null,
-        approved_by: null,
-        approved_by_name: null,
-        approved_at: null,
-        completed_at: new Date().toISOString(),
-        completed_by: user?.id ?? null,
-      })
-      .eq("id", selectedOrder.id);
-
-    setSaving(false);
-
-    if (updateError) {
-      setError(updateError.message);
-      return;
-    }
-
-    setSuccess("Results saved and order marked as completed.");
-    await createAuditLog({
-      userId: user?.id ?? null,
-      action: "results_saved",
-      tableName: "results",
-      recordId: selectedOrder.id,
-    });
-    await createNotification({
-      recipientRole: "admin",
-      type: "results_submitted",
-      title: "Results Submitted",
-      message: `Results were submitted for order ${selectedOrder.id.slice(0, 8)}.`,
-      entityType: "lab_orders",
-      entityId: selectedOrder.id,
-      createdBy: user?.id ?? null,
-    });
-    await loadPendingOrders();
-    router.replace("/dashboard/orders?refresh=1");
   });
 
   const updateApprovalStatus = async (nextStatus: "reviewed" | "approved") => {
@@ -280,126 +276,98 @@ export default function ResultsPage() {
     setError(null);
     setSuccess(null);
 
-    const now = new Date().toISOString();
-    const payload =
-      nextStatus === "reviewed"
-        ? {
-            approval_status: "reviewed" as const,
-            reviewed_by: user?.id ?? null,
-            reviewed_by_name: profile?.full_name ?? "Admin",
-            reviewed_at: now,
-          }
-        : {
-            approval_status: "approved" as const,
-            approved_by: user?.id ?? null,
-            approved_by_name: profile?.full_name ?? "Admin",
-            approved_at: now,
-          };
-
-    const { error: updateError } = await supabase
-      .from("lab_orders")
-      .update(payload)
-      .eq("id", selectedOrder.id);
-
-    setUpdatingApproval(false);
-
-    if (updateError) {
-      setError(updateError.message);
-      return;
-    }
-
-    setSuccess(nextStatus === "reviewed" ? "Order reviewed." : "Order approved.");
-    await createAuditLog({
-      userId: user?.id ?? null,
-      action: nextStatus === "reviewed" ? "report_reviewed" : "report_approved",
-      tableName: "lab_orders",
-      recordId: selectedOrder.id,
-    });
-    if (nextStatus === "approved") {
-      await createNotification({
-        recipientRole: "technician",
-        type: "report_approved",
-        title: "Report Approved",
-        message: `Report for order ${selectedOrder.id.slice(0, 8)} has been approved.`,
-        entityType: "lab_orders",
-        entityId: selectedOrder.id,
-        createdBy: user?.id ?? null,
+    try {
+      const response = await fetchWithAccessToken(`/api/workflow/orders/${selectedOrder.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action: "set_approval_status",
+          next_status: nextStatus,
+        }),
       });
-      await createNotification({
-        recipientRole: "receptionist",
-        type: "report_approved",
-        title: "Report Approved",
-        message: `Report for order ${selectedOrder.id.slice(0, 8)} is now ready.`,
-        entityType: "lab_orders",
-        entityId: selectedOrder.id,
-        createdBy: user?.id ?? null,
-      });
+
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!response.ok) {
+        setError(payload.error ?? "Unable to update approval status.");
+        return;
+      }
+
+      setSuccess(payload.message ?? (nextStatus === "reviewed" ? "Order reviewed." : "Order approved."));
+      await loadPendingOrders();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Unable to update approval status.");
+    } finally {
+      setUpdatingApproval(false);
     }
-    await loadPendingOrders();
   };
 
   return (
     <RoleGate allowedRoles={["admin", "technician"]}>
-      <PageHeader title="Result Entry" description="Record test outcomes and complete pending orders." />
+      <PageHeader title="Result Entry" description="Capture outcomes, progress orders through review, and release only governed results." />
 
-      <div className="mb-4 rounded-xl border border-gray-800 bg-gray-900 p-4">
-        <label className="mb-1 block text-sm text-gray-300">Select Order</label>
-        <select
+      <SurfaceSection
+        eyebrow="Workflow selection"
+        title="Choose active order"
+        description="Select the next order in the execution queue and keep its status, approval state, and referral context visible while entering results."
+        className="mb-5"
+      >
+        <SearchableSelect
+          label="Select order"
           value={selectedOrderId}
-          onChange={(event) => setSelectedOrderId(event.target.value)}
+          onChange={setSelectedOrderId}
+          options={orderOptions}
+          placeholder={orders.length === 0 ? "No orders available" : "Select order"}
+          searchPlaceholder="Search order or patient"
+          emptyMessage="No matching orders."
           disabled={loading || orders.length === 0}
-          className="w-full rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-        >
-          {orders.length === 0 ? <option value="">No orders available</option> : null}
-          {orders.map((order) => (
-            <option key={order.id} value={order.id}>
-              {order.id.slice(0, 8)} - {order.patient.name}
-            </option>
-          ))}
-        </select>
+        />
         {selectedOrder ? (
-          <div className="mt-3 flex flex-wrap items-center gap-2 text-xs">
-            <span className="rounded-md border border-gray-700 px-2 py-1 text-gray-300">
-              Order status: {selectedOrder.status}
-            </span>
-            <span className="rounded-md border border-indigo-700/60 bg-indigo-500/10 px-2 py-1 text-indigo-300">
-              Approval: {selectedOrder.approval_status}
-            </span>
-            {selectedOrder.referring_doctor_name ? (
-              <span className="rounded-md border border-gray-700 px-2 py-1 text-gray-300">
-                Ref. Dr: {selectedOrder.referring_doctor_name}
-              </span>
-            ) : null}
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <StatusBadge tone={selectedOrder.status === "completed" ? "good" : selectedOrder.status === "in_progress" ? "info" : "warn"}>
+              Order {selectedOrder.status}
+            </StatusBadge>
+            <StatusBadge tone={selectedOrder.approval_status === "approved" ? "good" : selectedOrder.approval_status === "reviewed" ? "info" : "neutral"}>
+              Approval {selectedOrder.approval_status}
+            </StatusBadge>
+            {selectedOrder.referring_doctor_name ? <StatusBadge tone="neutral">Ref. Dr {selectedOrder.referring_doctor_name}</StatusBadge> : null}
           </div>
         ) : null}
-      </div>
+      </SurfaceSection>
 
-      {loading ? <p className="text-sm text-gray-400">Loading pending orders...</p> : null}
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
-      {success ? <p className="mb-3 text-sm text-emerald-300">{success}</p> : null}
+      {loading ? <p className="text-sm text-slate-400">Loading pending orders...</p> : null}
+      {error ? <p className={`mb-3 ${errorTextClassName}`}>{error}</p> : null}
+      {success ? <p className={`mb-3 ${successTextClassName}`}>{success}</p> : null}
 
       {selectedOrder ? (
         <form onSubmit={onSubmit} className="space-y-3">
           {selectedOrder.tests.map((test) => {
             const path = watch(test.test_id);
             return (
-              <div key={test.test_id} className="rounded-xl border border-gray-800 bg-gray-900 p-4">
-                <p className="font-medium text-gray-100">{test.test_name}</p>
-                <p className="mb-3 text-xs text-gray-400">Normal Range: {test.normal_range}</p>
+              <div
+                key={test.test_id}
+                className="rounded-[1.75rem] border border-slate-800/80 bg-[linear-gradient(180deg,rgba(15,23,42,0.82),rgba(15,23,42,0.66))] p-5 shadow-[0_18px_50px_rgba(0,0,0,0.2)]"
+              >
+                <p className="text-xl font-semibold tracking-[-0.03em] text-slate-50">{test.test_name}</p>
+                <p className="mb-4 mt-2 text-xs uppercase tracking-[0.18em] text-slate-500">Normal range: {test.normal_range}</p>
                 <div className="grid gap-3 md:grid-cols-2">
-                  <input
-                    {...register(`${test.test_id}.result_value`)}
-                    placeholder="Result value"
-                    className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-                  />
-                  <input
-                    {...register(`${test.test_id}.remarks`)}
-                    placeholder="Remarks (optional)"
-                    className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-                  />
+                  <label>
+                    <span className={fieldLabelClassName}>Result value</span>
+                    <input
+                      {...register(`${test.test_id}.result_value`)}
+                      placeholder="Result value"
+                      className={inputClassName}
+                    />
+                  </label>
+                  <label>
+                    <span className={fieldLabelClassName}>Remarks</span>
+                    <input
+                      {...register(`${test.test_id}.remarks`)}
+                      placeholder="Remarks (optional)"
+                      className={inputClassName}
+                    />
+                  </label>
                 </div>
                 {!path?.result_value ? (
-                  <p className="mt-2 text-xs text-gray-500">Enter result value to complete this test.</p>
+                  <p className={helperTextClassName}>Enter result value to complete this test.</p>
                 ) : null}
               </div>
             );
@@ -408,7 +376,7 @@ export default function ResultsPage() {
           <button
             type="submit"
             disabled={saving}
-            className="rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+            className={primaryButtonClassName}
           >
             {saving ? "Saving..." : "Save Results"}
           </button>
@@ -418,7 +386,7 @@ export default function ResultsPage() {
                 type="button"
                 disabled={updatingApproval || selectedOrder.approval_status === "reviewed" || selectedOrder.approval_status === "approved"}
                 onClick={() => void updateApprovalStatus("reviewed")}
-                className="rounded-lg border border-blue-700 px-4 py-2 text-sm text-blue-300 transition hover:border-blue-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className={compactAccentButtonClassName}
               >
                 {updatingApproval ? "Updating..." : "Mark Reviewed"}
               </button>
@@ -426,7 +394,7 @@ export default function ResultsPage() {
                 type="button"
                 disabled={updatingApproval || selectedOrder.approval_status === "approved" || selectedOrder.status !== "completed"}
                 onClick={() => void updateApprovalStatus("approved")}
-                className="rounded-lg border border-emerald-700 px-4 py-2 text-sm text-emerald-300 transition hover:border-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+                className={compactButtonClassName}
               >
                 {updatingApproval ? "Updating..." : "Approve Report"}
               </button>
@@ -434,7 +402,7 @@ export default function ResultsPage() {
           ) : null}
         </form>
       ) : (
-        !loading && <p className="text-sm text-gray-400">No orders available for results workflow.</p>
+        !loading && <p className="text-sm text-slate-400">No orders available for results workflow.</p>
       )}
     </RoleGate>
   );

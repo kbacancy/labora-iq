@@ -1,18 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/src/components/ui/PageHeader";
+import { PaginationControls } from "@/src/components/ui/PaginationControls";
 import { Toast } from "@/src/components/ui/Toast";
 import { RoleGate } from "@/src/components/auth/RoleGate";
 import { useAuth } from "@/src/context/AuthContext";
+import { fetchWithAccessToken } from "@/src/lib/auth-fetch";
 import { supabase } from "@/src/lib/supabase";
 import { formatDate } from "@/src/lib/format";
-import { createAuditLog } from "@/src/lib/audit";
+import {
+  compactAccentButtonClassName,
+  compactButtonClassName,
+  compactDangerButtonClassName,
+  inputClassName,
+  SurfaceSection,
+  tableCellClassName,
+  tableHeadClassName,
+  tableHeaderCellClassName,
+  tableMutedCellClassName,
+  tableRowClassName,
+  tableWrapperClassName,
+} from "@/src/components/ui/surface";
 import type { Patient } from "@/src/types/database";
 
 export default function PatientsPage() {
+  const DEFAULT_PAGE_SIZE = 10;
   const { user, role } = useAuth();
   const searchParams = useSearchParams();
   const refreshFlag = searchParams.get("refresh");
@@ -24,62 +39,81 @@ export default function PatientsPage() {
   const [error, setError] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [archivingId, setArchivingId] = useState<string | null>(null);
+  const [seeding, setSeeding] = useState(false);
   const [toast, setToast] = useState<{ type: "success" | "error"; message: string } | null>(null);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [totalPatients, setTotalPatients] = useState(0);
 
-  const loadPatients = async () => {
+  const loadPatients = useCallback(async () => {
     setLoading(true);
     setError(null);
 
-    let query = supabase.from("patients").select("*").eq("is_archived", showArchived).order("created_at", { ascending: false });
+    const from = (page - 1) * pageSize;
+    const to = from + pageSize - 1;
+
+    let query = supabase
+      .from("patients")
+      .select("*", { count: "exact" })
+      .eq("is_archived", showArchived)
+      .order("created_at", { ascending: false })
+      .range(from, to);
     const trimmed = search.trim();
     if (trimmed) {
       query = query.or(`name.ilike.%${trimmed}%,phone.ilike.%${trimmed}%`);
     }
 
-    const { data, error: queryError } = await query;
+    const { data, error: queryError, count } = await query;
     if (queryError) {
       setError(queryError.message);
       setToast({ type: "error", message: queryError.message });
       setPatients([]);
+      setTotalPatients(0);
     } else {
       setPatients(data ?? []);
+      setTotalPatients(count ?? 0);
     }
     setLoading(false);
-  };
+  }, [page, pageSize, search, showArchived]);
 
   const onToggleArchive = async (patient: Patient, nextArchived: boolean) => {
     setArchivingId(patient.id);
     const payload = nextArchived
-      ? { is_archived: true, archived_at: new Date().toISOString(), archived_by: user?.id ?? null }
-      : { is_archived: false, archived_at: null, archived_by: null };
+      ? { action: "set_archived", archived: true }
+      : { action: "set_archived", archived: false };
 
-    const { error: updateError } = await supabase.from("patients").update(payload).eq("id", patient.id);
-    setArchivingId(null);
-
-    if (updateError) {
-      setError(updateError.message);
-      setToast({ type: "error", message: updateError.message });
-      await createAuditLog({
-        userId: user?.id ?? null,
-        action: nextArchived ? "patient_archive_failed" : "patient_restore_failed",
-        tableName: "patients",
-        recordId: patient.id,
+    try {
+      const response = await fetchWithAccessToken(`/api/patients/${patient.id}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
       });
+      const responsePayload = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
+      setArchivingId(null);
+
+      if (!response.ok) {
+        setError(responsePayload.error ?? "Unable to update patient archive status.");
+        setToast({ type: "error", message: responsePayload.error ?? "Unable to update patient archive status." });
+        return;
+      }
+
+      const nextCount = Math.max(0, totalPatients - 1);
+      const nextPage = nextCount > 0 && (page - 1) * pageSize >= nextCount ? Math.max(1, page - 1) : page;
+      if (nextPage !== page) {
+        setPage(nextPage);
+      } else {
+        void loadPatients();
+      }
+      setToast({
+        type: "success",
+        message: responsePayload.message ?? (nextArchived ? "Patient archived successfully." : "Patient restored successfully."),
+      });
+    } catch (error) {
+      setArchivingId(null);
+      const message = error instanceof Error ? error.message : "Unable to update patient archive status.";
+      setError(message);
+      setToast({ type: "error", message });
       return;
     }
-
-    await createAuditLog({
-      userId: user?.id ?? null,
-      action: nextArchived ? "patient_archived" : "patient_restored",
-      tableName: "patients",
-      recordId: patient.id,
-    });
-
-    setPatients((current) => current.filter((item) => item.id !== patient.id));
-    setToast({
-      type: "success",
-      message: nextArchived ? "Patient archived successfully." : "Patient restored successfully.",
-    });
   };
 
   const onDelete = async (id: string, name: string) => {
@@ -93,65 +127,67 @@ export default function PatientsPage() {
     }
 
     setDeletingId(id);
-    const { count: linkedOrderCount, error: linkedOrderError } = await supabase
-      .from("lab_orders")
-      .select("*", { count: "exact", head: true })
-      .eq("patient_id", id);
-
-    if (linkedOrderError) {
-      setDeletingId(null);
-      setError(linkedOrderError.message);
-      setToast({ type: "error", message: linkedOrderError.message });
-      await createAuditLog({
-        userId: user?.id ?? null,
-        action: "patient_delete_failed",
-        tableName: "patients",
-        recordId: id,
+    try {
+      const response = await fetchWithAccessToken(`/api/patients/${id}`, {
+        method: "DELETE",
       });
-      return;
-    }
-
-    if ((linkedOrderCount ?? 0) > 0) {
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
       setDeletingId(null);
-      const message = "Cannot delete patient with existing orders. Archive instead.";
+
+      if (!response.ok) {
+        setError(payload.error ?? "Unable to delete patient.");
+        setToast({ type: "error", message: payload.error ?? "Unable to delete patient." });
+        return;
+      }
+
+      const nextCount = Math.max(0, totalPatients - 1);
+      const nextPage = nextCount > 0 && (page - 1) * pageSize >= nextCount ? Math.max(1, page - 1) : page;
+      if (nextPage !== page) {
+        setPage(nextPage);
+      } else {
+        void loadPatients();
+      }
+      setToast({ type: "success", message: payload.message ?? "Patient deleted successfully." });
+    } catch (error) {
+      setDeletingId(null);
+      const message = error instanceof Error ? error.message : "Unable to delete patient.";
       setError(message);
       setToast({ type: "error", message });
-      await createAuditLog({
-        userId: user?.id ?? null,
-        action: "patient_delete_blocked_has_orders",
-        tableName: "patients",
-        recordId: id,
-      });
-      return;
     }
+  };
 
-    const { error: deleteError } = await supabase.from("patients").delete().eq("id", id);
-    setDeletingId(null);
+  const onLoadDemoPatients = async () => {
+    setSeeding(true);
+    setError(null);
 
-    if (deleteError) {
-      const message = deleteError.message.includes("foreign key")
-        ? "Cannot delete patient with existing orders. Archive instead."
-        : deleteError.message;
+    try {
+      const response = await fetchWithAccessToken("/api/patients/seed", {
+        method: "POST",
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string; message?: string };
+      setSeeding(false);
+
+      if (!response.ok) {
+        const message = payload.error ?? "Unable to load demo patients.";
+        setError(message);
+        setToast({ type: "error", message });
+        return;
+      }
+
+      setToast({ type: "success", message: payload.message ?? "Demo patients loaded." });
+      setSearch("");
+      setShowArchived(false);
+      if (page !== 1) {
+        setPage(1);
+      } else {
+        await loadPatients();
+      }
+    } catch (error) {
+      setSeeding(false);
+      const message = error instanceof Error ? error.message : "Unable to load demo patients.";
       setError(message);
       setToast({ type: "error", message });
-      await createAuditLog({
-        userId: user?.id ?? null,
-        action: "patient_delete_failed",
-        tableName: "patients",
-        recordId: id,
-      });
-      return;
     }
-
-    await createAuditLog({
-      userId: user?.id ?? null,
-      action: "patient_deleted",
-      tableName: "patients",
-      recordId: id,
-    });
-
-    setPatients((current) => current.filter((patient) => patient.id !== id));
-    setToast({ type: "success", message: "Patient deleted successfully." });
   };
 
   useEffect(() => {
@@ -162,89 +198,127 @@ export default function PatientsPage() {
       void loadPatients();
     }, 0);
     return () => clearTimeout(timer);
-  }, [user, refreshFlag, showArchived]);
+  }, [user, refreshFlag, loadPatients]);
 
   useEffect(() => {
     if (toastFlag === "created") {
-      setToast({ type: "success", message: "Patient added successfully." });
-      return;
+      const timer = setTimeout(() => {
+        setToast({ type: "success", message: "Patient added successfully." });
+      }, 0);
+      return () => clearTimeout(timer);
     }
     if (toastFlag === "updated") {
-      setToast({ type: "success", message: "Patient updated successfully." });
+      const timer = setTimeout(() => {
+        setToast({ type: "success", message: "Patient updated successfully." });
+      }, 0);
+      return () => clearTimeout(timer);
     }
   }, [toastFlag]);
 
   return (
     <RoleGate allowedRoles={["admin", "receptionist"]}>
       {toast ? <Toast type={toast.type} message={toast.message} onClose={() => setToast(null)} /> : null}
-      <PageHeader title="Patients" description="Manage patient records and demographics." actionHref="/dashboard/patients/new" actionLabel="Add Patient" />
+      <PageHeader
+        title="Patients"
+        description="Manage patient records, archive transitions, and demographic intake from one governed queue."
+        actionHref="/dashboard/patients/new"
+        actionLabel="Add Patient"
+      />
 
-      <div className="mb-4 flex gap-2">
-        <input
-          value={search}
-          onChange={(event) => setSearch(event.target.value)}
-          placeholder="Search by name or phone"
-          className="w-full rounded-lg border border-gray-700 bg-gray-900 px-3 py-2 text-sm"
-        />
-        <button
-          onClick={loadPatients}
-          className="rounded-lg border border-gray-700 px-3 py-2 text-sm text-gray-200 transition hover:border-indigo-400"
-        >
-          Search
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowArchived((current) => !current)}
-          className="rounded-lg border border-gray-700 px-3 py-2 text-sm text-gray-200 transition hover:border-indigo-400"
-        >
-          {showArchived ? "Show Active" : "Show Archived"}
-        </button>
-      </div>
+      <SurfaceSection
+        eyebrow="Directory controls"
+        title="Patient registry"
+        description="Search across active or archived patient records and take the next operational action directly from the list."
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {role === "admin" ? (
+              <button
+                type="button"
+                onClick={() => void onLoadDemoPatients()}
+                disabled={seeding}
+                className={compactAccentButtonClassName}
+              >
+                {seeding ? "Loading Demo Patients..." : "Load Demo Patients"}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => {
+                setPage(1);
+                setShowArchived((current) => !current);
+              }}
+              className={compactButtonClassName}
+            >
+              {showArchived ? "Show Active" : "Show Archived"}
+            </button>
+          </div>
+        }
+        className="mb-5"
+      >
+        <div className="flex flex-col gap-3 md:flex-row">
+          <input
+            value={search}
+            onChange={(event) => {
+              setPage(1);
+              setSearch(event.target.value);
+            }}
+            placeholder="Search by name or phone"
+            className={inputClassName}
+          />
+          <button type="button" onClick={() => void loadPatients()} className={compactAccentButtonClassName}>
+            Search Registry
+          </button>
+        </div>
+      </SurfaceSection>
 
-      <div className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+      <div className={tableWrapperClassName}>
         <table className="min-w-full text-sm">
-          <thead className="border-b border-gray-800 bg-gray-900/80 text-left text-gray-400">
+          <thead className={tableHeadClassName}>
             <tr>
-              <th className="px-4 py-3 font-medium">Name</th>
-              <th className="px-4 py-3 font-medium">Age</th>
-              <th className="px-4 py-3 font-medium">Gender</th>
-              <th className="px-4 py-3 font-medium">Phone</th>
-              <th className="px-4 py-3 font-medium">Created</th>
-              <th className="px-4 py-3 font-medium">Actions</th>
+              <th className={tableHeaderCellClassName}>Name</th>
+              <th className={tableHeaderCellClassName}>Age</th>
+              <th className={tableHeaderCellClassName}>Gender</th>
+              <th className={tableHeaderCellClassName}>Phone</th>
+              <th className={tableHeaderCellClassName}>Created</th>
+              <th className={tableHeaderCellClassName}>Actions</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
                   Loading patients...
                 </td>
               </tr>
             ) : error ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-red-400">
+                <td colSpan={6} className="px-5 py-8 text-center text-red-300">
                   {error}
                 </td>
               </tr>
             ) : patients.length === 0 ? (
               <tr>
-                <td colSpan={6} className="px-4 py-6 text-center text-gray-400">
-                  No patients found. <Link href="/dashboard/patients/new" className="text-indigo-400">Add one</Link>.
+                <td colSpan={6} className="px-5 py-8 text-center text-slate-400">
+                  No patients found.{" "}
+                  <Link href="/dashboard/patients/new" className="text-blue-300 hover:text-blue-200">
+                    Add one
+                  </Link>
+                  .
                 </td>
               </tr>
             ) : (
               patients.map((patient) => (
-                <tr key={patient.id} className="border-t border-gray-800 text-gray-200">
-                  <td className="px-4 py-3">{patient.name}</td>
-                  <td className="px-4 py-3">{patient.age}</td>
-                  <td className="px-4 py-3">{patient.gender}</td>
-                  <td className="px-4 py-3">{patient.phone}</td>
-                  <td className="px-4 py-3 text-gray-400">{formatDate(patient.created_at)}</td>
-                  <td className="px-4 py-3">
+                <tr key={patient.id} className={tableRowClassName}>
+                  <td className={tableCellClassName}>{patient.name}</td>
+                  <td className={tableCellClassName}>{patient.age}</td>
+                  <td className={tableCellClassName}>{patient.gender}</td>
+                  <td className={tableCellClassName}>{patient.phone}</td>
+                  <td className={tableMutedCellClassName}>{formatDate(patient.created_at)}</td>
+                  <td className={tableCellClassName}>
                     <div className="flex items-center gap-2">
                       <Link
                         href={`/dashboard/patients/${patient.id}`}
-                        className="rounded-md border border-indigo-700 px-2 py-1 text-xs text-indigo-300 transition hover:border-indigo-500"
+                        className={compactAccentButtonClassName}
                       >
                         Edit
                       </Link>
@@ -252,7 +326,7 @@ export default function PatientsPage() {
                         type="button"
                         onClick={() => void onToggleArchive(patient, !patient.is_archived)}
                         disabled={archivingId === patient.id}
-                        className="rounded-md border border-amber-700/70 px-2 py-1 text-xs text-amber-300 transition hover:border-amber-500 disabled:cursor-not-allowed disabled:opacity-60"
+                        className={compactButtonClassName}
                       >
                         {archivingId === patient.id
                           ? (patient.is_archived ? "Restoring..." : "Archiving...")
@@ -263,7 +337,7 @@ export default function PatientsPage() {
                           type="button"
                           onClick={() => void onDelete(patient.id, patient.name)}
                           disabled={deletingId === patient.id}
-                          className="rounded-md border border-red-800/70 px-2 py-1 text-xs text-red-300 transition hover:border-red-500 disabled:cursor-not-allowed disabled:opacity-60"
+                          className={compactDangerButtonClassName}
                         >
                           {deletingId === patient.id ? "Deleting..." : "Delete"}
                         </button>
@@ -275,6 +349,18 @@ export default function PatientsPage() {
             )}
           </tbody>
         </table>
+        {!loading && !error && totalPatients > 0 ? (
+          <PaginationControls
+            page={page}
+            pageSize={pageSize}
+            total={totalPatients}
+            onPageChange={setPage}
+            onPageSizeChange={(nextPageSize) => {
+              setPageSize(nextPageSize);
+              setPage(1);
+            }}
+          />
+        ) : null}
       </div>
     </RoleGate>
   );

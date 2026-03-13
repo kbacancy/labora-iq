@@ -33,10 +33,7 @@ interface PdfOptions {
   autoSave?: boolean;
 }
 
-export const generateLabReportPdf = (
-  payload: ReportPayload,
-  options: PdfOptions = { autoSave: true }
-) => {
+const buildLabReportPdf = (payload: ReportPayload) => {
   const doc = new jsPDF();
 
   doc.setFontSize(18);
@@ -109,10 +106,24 @@ export const generateLabReportPdf = (
   doc.setFontSize(9);
   doc.text(payload.reportFooter || "This is a system-generated laboratory report.", 14, 285);
 
+  return doc;
+};
+
+export const generateLabReportPdf = (
+  payload: ReportPayload,
+  options: PdfOptions = { autoSave: true }
+) => {
+  const doc = buildLabReportPdf(payload);
+
   const blob = doc.output("blob");
   if (options.autoSave !== false) {
     doc.save(options.fileName ?? `lab-report-${payload.orderId}.pdf`);
   }
 
   return blob;
+};
+
+export const generateLabReportPdfArrayBuffer = (payload: ReportPayload) => {
+  const doc = buildLabReportPdf(payload);
+  return doc.output("arraybuffer");
 };

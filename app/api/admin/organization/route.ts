@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { z } from "zod";
 import { assertAdminFromRequest } from "@/src/lib/admin-auth";
 import { supabaseServerAdmin } from "@/src/lib/supabase-server";
-
-const updateOrganizationSchema = z.object({
-  name: z.string().trim().min(2, "Organization name is required."),
-});
+import { parseJsonBody, updateOrganizationSchema } from "@/src/lib/validation";
 
 export async function GET(request: NextRequest) {
   const authResult = await assertAdminFromRequest(request);
@@ -32,7 +28,7 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ error: authResult.message }, { status: authResult.status });
   }
 
-  const body = await request.json().catch(() => null);
+  const body = await parseJsonBody(request);
   const parsed = updateOrganizationSchema.safeParse(body);
   if (!parsed.success) {
     return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid payload." }, { status: 400 });

@@ -3,8 +3,23 @@
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/src/components/ui/PageHeader";
 import { RoleGate } from "@/src/components/auth/RoleGate";
+import { fetchWithAccessToken } from "@/src/lib/auth-fetch";
 import { supabase } from "@/src/lib/supabase";
 import { formatDate } from "@/src/lib/format";
+import {
+  StatusBadge,
+  SurfaceSection,
+  errorTextClassName,
+  fieldLabelClassName,
+  inputClassName,
+  primaryButtonClassName,
+  tableCellClassName,
+  tableHeadClassName,
+  tableHeaderCellClassName,
+  tableMutedCellClassName,
+  tableRowClassName,
+  tableWrapperClassName,
+} from "@/src/components/ui/surface";
 
 interface InventoryItem {
   id: string;
@@ -43,7 +58,11 @@ export default function InventoryPage() {
   };
 
   useEffect(() => {
-    void loadItems();
+    const timer = setTimeout(() => {
+      void loadItems();
+    }, 0);
+
+    return () => clearTimeout(timer);
   }, []);
 
   const upsertItem = async () => {
@@ -58,106 +77,117 @@ export default function InventoryPage() {
 
     setSaving(true);
     setError(null);
+    try {
+      const response = await fetchWithAccessToken("/api/inventory", {
+        method: "PUT",
+        body: JSON.stringify({
+          reagent_name: name,
+          quantity,
+          reorder_level: reorderLevel,
+        }),
+      });
+      const payload = (await response.json().catch(() => ({}))) as { error?: string };
+      setSaving(false);
 
-    const { error: upsertError } = await supabase.from("inventory").upsert(
-      {
-        reagent_name: name,
-        quantity,
-        reorder_level: reorderLevel,
-        updated_at: new Date().toISOString(),
-      },
-      { onConflict: "reagent_name" }
-    );
+      if (!response.ok) {
+        setError(payload.error ?? "Unable to update inventory.");
+        return;
+      }
 
-    setSaving(false);
-
-    if (upsertError) {
-      setError(upsertError.message);
-      return;
+      setForm({ reagent_name: "", quantity: "", reorder_level: "" });
+      await loadItems();
+    } catch (error) {
+      setSaving(false);
+      setError(error instanceof Error ? error.message : "Unable to update inventory.");
     }
-
-    setForm({ reagent_name: "", quantity: "", reorder_level: "" });
-    await loadItems();
   };
 
   return (
     <RoleGate allowedRoles={["admin"]}>
-      <PageHeader title="Inventory" description="Track reagent levels and reorder thresholds." />
+      <PageHeader title="Inventory" description="Track reagent levels, monitor replenishment risk, and keep supply readiness visible." />
 
-      <section className="mb-5 rounded-xl border border-gray-800 bg-gray-900 p-5">
-        <h2 className="text-lg font-medium">Add or Update Reagent</h2>
-        <div className="mt-3 grid gap-3 md:grid-cols-3">
-          <input
-            value={form.reagent_name}
-            onChange={(event) => setForm((current) => ({ ...current, reagent_name: event.target.value }))}
-            placeholder="Reagent name"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-          />
-          <input
-            type="number"
-            value={form.quantity}
-            onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))}
-            placeholder="Quantity"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-          />
-          <input
-            type="number"
-            value={form.reorder_level}
-            onChange={(event) => setForm((current) => ({ ...current, reorder_level: event.target.value }))}
-            placeholder="Reorder level"
-            className="rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm"
-          />
+      <SurfaceSection
+        eyebrow="Supply command"
+        title="Add or update reagent"
+        description="Maintain current stock, reorder thresholds, and the live replenishment posture for the lab."
+        className="mb-5"
+      >
+        <div className="grid gap-4 md:grid-cols-3">
+          <label>
+            <span className={fieldLabelClassName}>Reagent name</span>
+            <input
+              value={form.reagent_name}
+              onChange={(event) => setForm((current) => ({ ...current, reagent_name: event.target.value }))}
+              placeholder="Reagent name"
+              className={inputClassName}
+            />
+          </label>
+          <label>
+            <span className={fieldLabelClassName}>Quantity</span>
+            <input
+              type="number"
+              value={form.quantity}
+              onChange={(event) => setForm((current) => ({ ...current, quantity: event.target.value }))}
+              placeholder="Quantity"
+              className={inputClassName}
+            />
+          </label>
+          <label>
+            <span className={fieldLabelClassName}>Reorder level</span>
+            <input
+              type="number"
+              value={form.reorder_level}
+              onChange={(event) => setForm((current) => ({ ...current, reorder_level: event.target.value }))}
+              placeholder="Reorder level"
+              className={inputClassName}
+            />
+          </label>
         </div>
-        <button
-          type="button"
-          onClick={() => void upsertItem()}
-          disabled={saving}
-          className="mt-4 rounded-lg bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition hover:bg-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
-        >
+        <button type="button" onClick={() => void upsertItem()} disabled={saving} className={`mt-5 ${primaryButtonClassName}`}>
           {saving ? "Saving..." : "Save Reagent"}
         </button>
-      </section>
+      </SurfaceSection>
 
-      {error ? <p className="mb-3 text-sm text-red-400">{error}</p> : null}
+      {error ? <p className={`mb-3 ${errorTextClassName}`}>{error}</p> : null}
 
-      <div className="overflow-hidden rounded-xl border border-gray-800 bg-gray-900">
+      <div className={tableWrapperClassName}>
         <table className="min-w-full text-sm">
-          <thead className="border-b border-gray-800 text-left text-gray-400">
+          <thead className={tableHeadClassName}>
             <tr>
-              <th className="px-4 py-3 font-medium">Reagent</th>
-              <th className="px-4 py-3 font-medium">Quantity</th>
-              <th className="px-4 py-3 font-medium">Reorder Level</th>
-              <th className="px-4 py-3 font-medium">Status</th>
-              <th className="px-4 py-3 font-medium">Updated</th>
+              <th className={tableHeaderCellClassName}>Reagent</th>
+              <th className={tableHeaderCellClassName}>Quantity</th>
+              <th className={tableHeaderCellClassName}>Reorder Level</th>
+              <th className={tableHeaderCellClassName}>Status</th>
+              <th className={tableHeaderCellClassName}>Updated</th>
             </tr>
           </thead>
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={5} className="px-5 py-8 text-center text-slate-400">
                   Loading inventory...
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-gray-400">
+                <td colSpan={5} className="px-5 py-8 text-center text-slate-400">
                   No inventory items configured.
                 </td>
               </tr>
             ) : (
               items.map((item) => (
-                <tr key={item.id} className="border-t border-gray-800 text-gray-200">
-                  <td className="px-4 py-3">{item.reagent_name}</td>
-                  <td className="px-4 py-3">{item.quantity}</td>
-                  <td className="px-4 py-3">{item.reorder_level}</td>
-                  <td className="px-4 py-3">
+                <tr key={item.id} className={tableRowClassName}>
+                  <td className={tableCellClassName}>{item.reagent_name}</td>
+                  <td className={tableCellClassName}>{item.quantity}</td>
+                  <td className={tableCellClassName}>{item.reorder_level}</td>
+                  <td className={tableCellClassName}>
                     {item.quantity <= item.reorder_level ? (
-                      <span className="rounded-md bg-red-600/20 px-2 py-1 text-xs text-red-300">Reorder</span>
+                      <StatusBadge tone="danger">Reorder</StatusBadge>
                     ) : (
-                      <span className="rounded-md bg-emerald-600/20 px-2 py-1 text-xs text-emerald-300">OK</span>
+                      <StatusBadge tone="good">OK</StatusBadge>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-gray-400">{formatDate(item.updated_at)}</td>
+                  <td className={tableMutedCellClassName}>{formatDate(item.updated_at)}</td>
                 </tr>
               ))
             )}
